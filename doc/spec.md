@@ -1,6 +1,6 @@
 # Reviewy — Specification (v1)
 
-> Working title. Status: draft spec for v1. Items marked **[SPIKE]** must be validated before the dependent design is locked in.
+> Working title. Status: spec for v1. Spikes resolved (§17).
 
 ## 1. Purpose
 
@@ -92,8 +92,8 @@ loop {
     if terminate_flag.load() { save(); break; }
     if crossterm::event::poll(timeout)? {
         let event = crossterm::event::read()?;
-        let actions = input.handle(event, &app.mode);
-        for action in actions { app.apply(action); }
+        let commands = input.handle(event, &app.mode);   // vim::Command
+        for cmd in commands { app.apply(app.map_command(cmd)); } // → Action
     }
     if app.dirty { terminal.draw(|f| ui::draw(f, &app))?; app.dirty = false; }
     if app.should_quit { save(); break; }
@@ -129,26 +129,31 @@ src/
   main.rs              clap args, hooks/signals, terminal setup/teardown, event loop
   config.rs            reviewy.toml loading & merging, defaults
   git.rs               repo root, base SHA, status parsing, `git show`, binary detection
+  diff.rs              DiffEngine trait; declares submodules
   diff/
-    mod.rs             DiffEngine trait
     model.rs           FileDiff, Row, LineKind, change spans
     difft.rs           DifftEngine: spawn, parse JSON, version check
-    align.rs           build whole-file aligned rows from difft chunks
+    align.rs           build whole-file aligned rows from difft output
+  highlight.rs         declares submodules; apply() entry point
   highlight/
     languages.rs       language registry: extension → grammar + queries
     highlighter.rs     tree-sitter-highlight → per-line style spans
     theme.rs           Zed theme JSON parsing, alpha blending, capture fallback, bundled themes
+  comments.rs          declares submodules
   comments/
     model.rs           Comment, Side, LineRange, ColRange, Context, CommentSet
     store.rs           JSON load/save
     render_md.rs       preamble + markdown rendering
+  vim.rs               declares submodules
   vim/
-    keys.rs            key/chord/count parser → Action
+    keys.rs            key/chord/count parser → vim::Command
     motion.rs          Motion enum, TextView trait, motion application
     wrap.rs            soft-wrap layout (shared by diff view, editor, gj/gk)
+  app.rs               declares submodules
   app/
     state.rs           App, Screen, Mode, modal stack, per-file view state
-    actions.rs         Action enum and App::apply
+    actions.rs         Action enum, vim::Command → Action mapping, App::apply
+  ui.rs                declares submodules; top-level draw()
   ui/
     explorer.rs        explorer overlay
     diff_view.rs       two-column rendering, gutter, cursor/selection
@@ -156,6 +161,8 @@ src/
     modals.rs          confirm, large file, load existing, comment editor frame
     status.rs          status line / transient messages
 ```
+
+No `mod.rs` files: each directory module has a sibling `foo.rs`.
 
 ## 6. Git integration
 
@@ -188,11 +195,31 @@ struct ChangedFile {
 - Untracked files are listed as new (`Untracked` is shown with the same color as `Added`).
 - Unstaged renames appear as a delete plus an untracked file. Accepted.
 - Files matching `ignore` globs from config are dropped.
-- Conflicted (unmerged) entries, submodules and mode-only changes are listed but not viewable in v1, like binary files. Markers: `C` conflicted, `S` submodule, `M` mode-only. Enter shows a status message. Conflict resolution is planned for a later version.
+- Conflicted (unmerged) entries, submodules and mode-only changes are listed but not viewable in v1, like binary files. Markers: `C` conflicted, `S` submodule, `P` mode-only (permissions). Enter shows a status message. Conflict resolution is planned for a later version.
+
+Porcelain v2 record types (with `-z`):
+
+- `1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>` — ordinary change.
+- `2 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <score> <path>\0<origPath>` — rename/copy; the original path is the next NUL-separated field.
+- `u <XY> <sub> ...` — unmerged → `Conflicted`.
+- `? <path>` — untracked.
+- `<sub>` starting with `S` (e.g. `S...`) → `Submodule`; `N...` is a normal file.
+
+### Numstat pass
+
+Once at startup, after status: `git diff HEAD --numstat -z` (one call for all tracked files). Per path:
+
+- `-\t-` → `binary = true`.
+- `0\t0` with `mH != mW` (or `mH != mI`) and not a rename → `ModeOnly`.
+- Untracked files are not included in numstat output (see binary detection).
+
+Rename records in `-z` numstat output are `0\t0\t\0<old>\0<new>\0` (empty path field followed by both paths).
 
 ### Binary detection
 
-A file is binary if either side contains a NUL byte in its first 8000 bytes (git's heuristic). Binary files are listed with a `B` marker and are not openable (status message on Enter).
+- Tracked files: from the numstat pass (`-\t-`). No blobs are read at startup.
+- Untracked files: binary if the file contains a NUL byte in its first 8000 bytes (git's heuristic).
+- Binary files are listed with a `B` marker and are not openable (status message on Enter). This filter is required: git passes binary files to difft, which then diffs them as text.
 
 ### File content
 
@@ -200,6 +227,7 @@ A file is binary if either side contains a NUL byte in its first 8000 bytes (git
 - New side: read the working-tree file.
 - Added/untracked files have no old side; deleted files have no new side.
 - `\r\n` is normalized to `\n` for display; tabs expanded to `tab_width` spaces.
+- `git show HEAD:<missing>` exits 128 (`fatal: path '…' does not exist in 'HEAD'`); treat as a per-file error.
 
 ### Large files
 
@@ -229,59 +257,51 @@ v1 has one implementation, `DifftEngine`. A `BuiltinEngine` fallback may follow 
 
 Environment for all difft runs: `DFT_UNSTABLE=yes`, `DFT_DISPLAY=json` (and `--display json` when calling directly).
 
-- **Tracked changes** (modified, deleted, renamed, staged-added):
+- **Tracked changes** (modified, deleted, staged-added):
   ```
   GIT_EXTERNAL_DIFF=difft DFT_DISPLAY=json DFT_UNSTABLE=yes git diff HEAD -- <path>
   ```
-  git materializes the old blob as a temp file and passes the 7-argument (or 9 with renames) external diff convention to difft. `GIT_EXTERNAL_DIFF` takes precedence over any user `diff.external` config. No temp-file handling in Reviewy.
+  git materializes the old blob as a temp file and passes the 7-argument external diff convention to difft. `GIT_EXTERNAL_DIFF` takes precedence over any user `diff.external` config. No temp-file handling in Reviewy.
+- **Renames:** the pathspec must contain **both** paths: `git diff HEAD -- <from> <path>`. With only the new path, git does not detect the rename and difft reports `created`. With both, git uses the 9-argument form and the JSON `path` is the new path.
 - **Untracked files:**
   ```
-  difft --display json /dev/null <path>
+  DFT_UNSTABLE=yes difft --display json /dev/null <path>
   ```
-  Mirrors what git passes for an added file. difft reports `"status": "created"`.
+  Mirrors what git passes for an added file. difft reports `"status": "created"` (an empty file reports `"unchanged"`). Without `DFT_UNSTABLE=yes` difft exits 2.
 
-Results are cached per file for the session.
+Results are cached per file for the session. difft takes ~1 s on a 4000-line file with many changes; since the loop is synchronous, draw a "Diffing…" status message before invoking it.
 
-### Difft JSON (expected shape)
+### Difft JSON (observed shape, 0.71.0)
 
 ```json
 {
   "path": "src/foo.rs",
   "language": "Rust",
   "status": "changed",
+  "aligned_lines": [[0, 0], [null, 1], [1, 2], [2, 3], [3, null], [4, 4]],
   "chunks": [
     [
-      { "lhs": { "line_number": 10, "changes": [ { "start": 4, "end": 9, "content": "foo", "highlight": "normal" } ] },
-        "rhs": { "line_number": 11, "changes": [ ... ] } },
-      { "rhs": { "line_number": 12, "changes": [ ... ] } }
+      { "rhs": { "line_number": 1, "changes": [ { "start": 0, "end": 3, "content": "use", "highlight": "keyword" } ] } },
+      { "lhs": { "line_number": 2, "changes": [] },
+        "rhs": { "line_number": 3, "changes": [ { "start": 31, "end": 37, "content": "Result", "highlight": "type" } ] } }
     ]
   ]
 }
 ```
 
-Line numbers are 0-based. The schema is unstable; parsing is isolated in `difft.rs` and should be tolerant (unknown fields ignored).
+- `status`: `changed`, `created`, `deleted`, `unchanged`. Only `changed` has `aligned_lines` and `chunks`.
+- `aligned_lines`: whole-file row alignment, `[lhs | null, rhs | null]`, 0-based line indices. It always ends with one phantom pair one past the last line (with or without a trailing newline).
+- `chunks`: only lines with changes. A side may appear with `changes: []` (that line is paired with a changed line but has no changed tokens itself).
+- `changes[].start/end`: **byte** offsets into the **raw** line (before tab expansion; `\t` is one byte). Zero-width spans (`start == end`) occur.
+- `language`: not reliable (e.g. `"Text (exceeded DFT_GRAPH_LIMIT)"`, `"Text (2 Python parse errors, …)"`). Ignored; language is detected by extension (§9).
+- When difft falls back to line-based diffing (parse errors, graph limit) the shape is unchanged.
+- `highlight` and `content` fields are not used.
+
+The schema is unstable; parsing is isolated in `difft.rs` and should be tolerant (unknown fields ignored).
 
 ### Minimum difft version
 
 Minimum version: **0.71.0**. Checked at startup by parsing `difft --version` output (format: `Difftastic 0.71.0`). If difft is missing or too old: hard error with install hint (v1 is a personal tool; the user ensures it's installed).
-
-### [SPIKE] S1 — difft JSON sufficiency
-
-Run difft JSON against real modified files and confirm:
-
-1. Whether unchanged lines inside a chunk are listed and paired.
-2. How lhs/rhs entries pair within a chunk (row alignment).
-3. How gaps between chunks align, especially when difft treats reformatting as unchanged (gap lengths can differ between sides).
-4. `changes[].start/end` units (bytes vs chars).
-
-If alignment info is insufficient, `align.rs` fills gaps with its own line diff of the unchanged regions.
-
-### [SPIKE] S2 — git external mode details
-
-1. `path` in difft JSON under the 9-argument rename form matches our repo-relative path.
-2. `difft /dev/null <path>` produces valid JSON with `status: created`.
-3. Behavior for deleted files via `git diff HEAD -- <path>`.
-4. Detecting mode-only changes (mode differs, content identical) and submodule entries from porcelain v2 output.
 
 ## 8. Diff model and alignment
 
@@ -296,7 +316,7 @@ struct FileDiff {
 struct SideText {
     lines: Vec<String>,
     kinds: Vec<LineKind>,        // per line
-    changes: Vec<Vec<Range<usize>>>, // per line, changed token spans
+    changes: Vec<Vec<Range<usize>>>, // per line, changed token spans: byte ranges into the tab-expanded `lines[i]`
     highlights: Vec<Vec<StyledSpan>>, // per line, from highlighter
 }
 
@@ -307,25 +327,48 @@ struct Row { lhs: Option<u32>, rhs: Option<u32> } // 0-based line indices
 
 Alignment (`align.rs`):
 
-- Walk difft chunks in order.
-- Between chunks: unchanged lines are paired 1:1 in order; if the gap lengths differ, the shorter side is padded with empty rows.
-- Within chunks: use difft's lhs/rhs pairing per entry; unpaired entries get an empty opposite side.
-- Added files: all rows `{ lhs: None, rhs: Some(i) }`, all lines `Added`. Deleted: mirror.
+- `changed`: rows come directly from difft's `aligned_lines`. Any index ≥ that side's line count becomes `None`; rows that become `(None, None)` are dropped (removes the phantom trailing pair).
+- Line kinds from chunks: a line listed in a chunk whose row has both sides → `Changed`; listed with no opposite side → `Removed` (lhs) / `Added` (rhs). Lines not in any chunk → `Unchanged`, **including unpaired ones** (e.g. difft treats reformatting — one line split into several — as unchanged; the extra lines get padding opposite but no tint).
+- Change spans: difft's raw byte offsets are converted to byte offsets in the tab-expanded line when the file is loaded. Zero-width spans are dropped. Nothing downstream sees raw offsets.
+- `created` / untracked: all rows `{ lhs: None, rhs: Some(i) }`, all lines `Added`. `deleted`: mirror.
+- `unchanged` (pure rename, empty untracked file): rows paired 1:1, all `Unchanged`.
 - Hunks are maximal runs of rows containing any non-`Unchanged` line.
 
 ## 9. Syntax highlighting and themes
 
 ### Highlighting
 
-- Crates: `tree-sitter`, `tree-sitter-highlight`, grammar crates `tree-sitter-rust`, `tree-sitter-python`, `tree-sitter-c-sharp`, `tree-sitter-typescript` (TS + TSX).
-- Highlight queries: the grammar crates' bundled `HIGHLIGHTS_QUERY` (MIT). Zed's own `.scm` queries are GPL and are **not** used.
+- Crates: `tree-sitter`, `tree-sitter-highlight`, grammar crates `tree-sitter-rust`, `tree-sitter-python`, `tree-sitter-c-sharp`, `tree-sitter-typescript` (TS + TSX), `tree-sitter-javascript` (queries only, required by TS). Versions in §15.
+- Highlight queries: the grammar crates' bundled queries (MIT). Zed's own `.scm` queries are GPL and are **not** used.
 - Language detection by extension: `.rs`; `.py`, `.pyi`; `.cs`; `.ts`, `.mts`, `.cts`; `.tsx`. Unknown → plain text.
 - Each side is highlighted once, on file open, into per-line `StyledSpan`s, then cached.
-- Capture names map to theme `syntax` keys by exact match, then by stripping dotted suffixes (`function.method` → `function`), then default foreground. A small remap table handles naming differences between grammar queries and Zed keys.
+- API (0.27): `Highlighter::highlight(config, source, None, None, injection_callback)` — 5 arguments.
 
-### [SPIKE] S3 — tree-sitter
+Per-language `HighlightConfiguration` (highlights / injections / locals):
 
-Confirm compatible versions of `tree-sitter`, `tree-sitter-highlight` and the four grammar crates (via `tree-sitter-language`), and list each grammar's capture names against Zed theme keys to build the remap table.
+| Language | Highlights | Injections | Locals |
+|---|---|---|---|
+| Rust | `tree_sitter_rust::HIGHLIGHTS_QUERY` | `INJECTIONS_QUERY` | — |
+| Python | `HIGHLIGHTS_QUERY` | — | — |
+| C# | `HIGHLIGHTS_QUERY` (crate ships no injections/locals) | — | — |
+| TypeScript | JS `HIGHLIGHT_QUERY` + TS `HIGHLIGHTS_QUERY` | JS `INJECTIONS_QUERY` | JS `LOCALS_QUERY` + TS `LOCALS_QUERY` |
+| TSX | JS `HIGHLIGHT_QUERY` + JS `JSX_HIGHLIGHT_QUERY` + TS `HIGHLIGHTS_QUERY` | JS `INJECTIONS_QUERY` | JS + TS locals |
+
+- **Concatenation order matters**: when several patterns match a node, the later one wins. Order is JS, then JSX (TSX only), then TS. TS alone lacks strings, comments, functions and numbers. The JS constant is spelled `HIGHLIGHT_QUERY` (singular). TS grammars: `LANGUAGE_TYPESCRIPT`, `LANGUAGE_TSX`.
+- **Injections**: the Rust query re-injects `rust` into macro token trees; the callback returns the Rust config so `vec![…]` / `println!(…)` bodies are highlighted. All other injection languages (JS `regex`, `jsdoc`, `css`, `html`, `graphql`, …) → `None`.
+- Known upstream quirk: TS marks capitalized identifiers as `type` (e.g. `function App`). Accepted.
+
+Capture → theme key mapping:
+
+- Pass the theme's `syntax` key list (after applying the remap below) to `HighlightConfiguration::configure()`. tree-sitter-highlight matches capture names to the longest dotted prefix itself, so exact matches and suffix stripping (`property.definition` → `property`) need no extra code. Unmatched → default foreground.
+- Captures that are not highlights are never configured: names starting with `_`, `injection.` or `local.`, and `glimmer`.
+- Remap table, applied before matching:
+  ```rust
+  const REMAP: &[(&str, &str)] = &[
+      ("escape", "string.escape"), // rust, python
+  ];
+  ```
+- Against Tokyo Night Moon, all 31 highlight captures resolve. Of Zed's 94 syntax keys, 65 are unreachable with these queries (e.g. `keyword.*` subkeys, `function.call`, `boolean`); accepted.
 
 ### Themes
 
@@ -358,7 +401,7 @@ Bundled: `default_theme/tokyo-night.json`, compiled in via `include_str!`. It co
 ### Explorer overlay
 
 - Flat list of changed files in `git status` order (tree view later).
-- Each entry: status color (theme added/modified/deleted; `conflict` for conflicted files), path (`old → new` for renames), unviewable marker (`B` binary, `C` conflicted, `S` submodule, `M` mode-only), comment count (e.g. `[2]`) when > 0.
+- Each entry: status color (theme added/modified/deleted; `conflict` for conflicted files), path (`old → new` for renames), unviewable marker (`B` binary, `C` conflicted, `S` submodule, `P` mode-only), comment count (e.g. `[2]`) when > 0.
 - `j`/`k` (and counts, `gg`/`G`) move; Enter opens the selected file (replacing the current one) and closes the overlay; Esc closes the overlay (no-op if no file is open yet).
 - No preview while moving.
 
@@ -461,7 +504,8 @@ All cursor-mode motions extend the selection. Selections cannot cross columns.
 
 ### Vim engine (`src/vim/`)
 
-- `keys.rs`: stateful parser over key events. Accumulates an optional count and multi-key chords (`gg`, `g]`, `gn`, …) and emits `Action`s. No chord timeout; Esc clears pending input. Counts are supported (`5j`, `3w`). Keys map to `Action` enums through a table so configurable bindings (v1.1+) are a table swap.
+- `keys.rs`: stateful parser over key events. Accumulates an optional count and multi-key chords (`gg`, `g]`, `gn`, …) and emits `vim::Command`s (motion + count, mode switches, operators such as "comment" / "delete comment"). No chord timeout; Esc clears pending input. Counts are supported (`5j`, `3w`). Keys map to `Command`s through a table so configurable bindings (v1.1+) are a table swap.
+- `vim/` has no dependency on `app/`. The app maps `vim::Command` → `app::Action` in `app/actions.rs` (context-dependent, e.g. Enter in row mode → edit comment or enter cursor mode). The comment editor (v1.1 modal editing) consumes the same `Command`s with its own mapping.
 - `motion.rs`: `Motion` enum (`Left`, `Right`, `Down`, `Up`, `ScreenDown`, `ScreenUp`, `WordForward`, `WordBackward`, `WordEnd`, `LineStart`, `LineEnd`, `FileStart`, `FileEnd`, `HalfPageDown`, `HalfPageUp`, …) applied over:
   ```rust
   trait TextView {
@@ -641,7 +685,7 @@ context_lines = 3
 | CLI | `clap` (derive) |
 | Serialization | `serde`, `serde_json`, `toml` |
 | Errors | `color-eyre`, `thiserror` |
-| Highlighting | `tree-sitter`, `tree-sitter-highlight`, `tree-sitter-rust`, `tree-sitter-python`, `tree-sitter-c-sharp`, `tree-sitter-typescript` |
+| Highlighting | `tree-sitter` 0.27.1, `tree-sitter-highlight` 0.27.1, `tree-sitter-rust` 0.24.2, `tree-sitter-python` 0.25.0, `tree-sitter-c-sharp` 0.23.5, `tree-sitter-typescript` 0.23.2, `tree-sitter-javascript` 0.25.0 |
 | Text | `unicode-width`, `unicode-segmentation` |
 | Paths | `etcetera` |
 | Ignore globs | `globset` |
@@ -649,13 +693,18 @@ context_lines = 3
 | Logging | `tracing`, `tracing-subscriber` |
 | Tests (dev) | `insta`, `tempfile` (test repos only) |
 
-Versions are pinned at implementation time; `tree-sitter` and `tree-sitter-highlight` must be version-compatible with each other and the grammar crates (S3).
+Highlighting versions were verified together (S3): one `tree-sitter` in the tree, grammars linked via `tree-sitter-language` 0.1. Other versions are pinned at implementation time. All grammar crates are MIT; `tree-sitter-typescript` ships no LICENSE file, so credit it in third-party notices manually.
 
 ## 16. Testing
 
 - **Unit tests:**
   - `git.rs`: porcelain v2 parsing from fixture bytes (modified, added, deleted, renamed, untracked, conflicted, submodule, mode-only).
-  - `diff/difft.rs` + `align.rs`: fixture difft JSON → rows/hunks (captured during S1).
+  - `diff/difft.rs` + `align.rs`: fixture difft JSON → rows/hunks. Fixtures in `tests/fixtures/difft/<case>/` (`old.*`, `new.*`, `difft.json`, captured with difft 0.71.0):
+    - `mod`: modified Rust — added/removed/changed lines, `changes: []` entries, phantom trailing pair.
+    - `reformat`: one line split into several — unpaired rows outside any chunk (→ `Unchanged`).
+    - `uni`: multibyte characters — byte-offset spans.
+    - `tab`: tab-indented line — raw-offset → tab-expanded conversion.
+    - Trivial statuses (`created`, `deleted`, `unchanged`) and zero-width spans are inline JSON strings in the tests.
   - `vim/`: key parser (counts, chords, Esc), motions over fixture text, wrap layout ↔ screen-row motions.
   - `highlight/theme.rs`: Zed theme parsing, alpha blending, capture fallback.
   - `comments/`: JSON round-trip (lossless), overlap check, md rendering (insta snapshot), fence-length selection.
@@ -665,8 +714,10 @@ Versions are pinned at implementation time; `tree-sitter` and `tree-sitter-highl
 
 ## 17. Spikes
 
-| ID | Topic | Blocks |
+All resolved (difft 0.71.0, tree-sitter 0.27.1). Findings are folded into §6, §7, §8, §9 and §15.
+
+| ID | Topic | Outcome |
 |---|---|---|
-| S1 | difft JSON alignment sufficiency, span units | `align.rs`, diff model |
-| S2 | git external-diff path field with renames; `/dev/null` for untracked; deleted files; mode-only/submodule detection | `difft.rs` |
-| S3 | tree-sitter crate version compatibility; capture-name remap table | `highlight/` |
+| S1 | difft JSON alignment sufficiency, span units | Sufficient: `aligned_lines` gives whole-file alignment; spans are raw byte offsets |
+| S2 | git external-diff details | Renames need both paths; untracked via `/dev/null`; binary/mode-only via numstat |
+| S3 | tree-sitter versions, capture remap | Versions pinned; TS needs JS queries; one remap entry |

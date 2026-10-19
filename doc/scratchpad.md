@@ -148,8 +148,41 @@ Saving: the details (notes)
 - Signals can be handled gracefully without the need for mutex locks. Only panics are special and in that case, we accept that data will be lost. We can revisit this at a later date, once we know more about how users (in this case, me) interact with the software.
 - ctrl-c should do nothing. In this context, ctrl-c is likely to be used for copy, not kill.
 
+tempfile (notes)
 
+If this is true then how does the following command work: `git -c diff.external=difft diff HEAD`?
 
+Questions:
+
+1. our own, seems like the right path for now.
+2. Overlay list, j/k choose. Esc closes list, Enter opens selected file (replaces current in tui). Comment count useful. No changes to preview currently. On app open: same overlay list but blank columns.
+3. Add counts if helps with parser design.
+4. This is fine. currently this is an app for me, I can ensure this is installed. If it becomes useful and I decide to publish to the public, then we can consider that. But at that time, we'll likely be well beyond v1.1!
+5. Message and exit as suggestion.
+6. yes. Will require some sort of visual indicator, like a B or icon - similar to the comment count
+
+---
+Notes:
+
+"new files skip difft anyway" - we DO want to diff new, untracked files if they have been created. Is there a way of doing this? Some 'include untracked' flag?
+
+Questions:
+1. later, but yes, will be required after v1
+2. yes.
+3. yes for the saved comment information.
+4. yes, no checks for v1. For v1. save commit hash with comments - we will later use this to verify if comments could be stale.
+5. Yes.
+6. Yes, punt for now. 
+7. location good, don't read.
+
+One thing left. Note that if a visual selection is made before entering a comment, we should copy that selected text into the comment box - useful for code edits.
+
+---
+
+1. wrapped in fence - will be needed later for syntax highlighting/coloring in comments (not v1) and for change interface. Currently we shouldn't assume "replace with this" unless the comment says so.
+2. Yes.
+
+Happy to start spec writing now unless you have further questions.
 
 ---
 
@@ -158,3 +191,4 @@ Quick notes:
 Exiting comments: Esc -> Confirmation Modal: Enter confirms, Esc cancels. That way User needs to hit Esc Enter to close, and Esc Esc if hit by mistake. Simple 2 button combo, but must be explicit.
 
 
+, `tempfile` at runtime (git handles temp files), `imara-diff` (v1.1), any async runtime.
