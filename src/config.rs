@@ -56,7 +56,6 @@ pub struct CommentsConfig {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-#[allow(dead_code, reason = "all fields read by task 03; remove then")]
 pub struct DifftConfig {
     pub binary: PathBuf,
 }

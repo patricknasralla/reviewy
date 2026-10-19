@@ -2,6 +2,7 @@ mod app;
 mod cli;
 mod comments;
 mod config;
+#[allow(dead_code, reason = "used by task 07; remove then")]
 mod diff;
 mod git;
 mod highlight;
@@ -56,11 +57,12 @@ fn main() -> Result<()> {
 
     let root = git::repo_root()?;
     let base_commit = git::base_commit(&root)?;
-    // task 03: difft version check
     let config = config::load(&root)?;
     if let Ok(directive) = std::env::var("REVIEWY_LOG") {
         init_logging(&ensure_reviewy_dir(&root)?, &directive)?;
     }
+    let difft_version = diff::difft::check_version(&config.difft.binary)?;
+    tracing::debug!(%difft_version, "difftastic");
     let ignore = git::build_ignore(&config.ignore.paths)?;
     let files = git::changed_files(&root, DiffTarget::WorkingTreeVsHead, &ignore)?;
     if files.is_empty() {

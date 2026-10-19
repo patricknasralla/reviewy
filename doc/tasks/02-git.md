@@ -114,4 +114,4 @@ Unit tests over inline byte strings (no git repo needed):
 ### Left undone / accepted
 
 - After `git rm --cached <f>` with the file still on disk, `<f>` is listed twice (`Deleted` and `Untracked`). Accepted for v1.
-- A record present in status but absent from numstat (staged change reverted in the worktree) is listed as `Modified`; difft will report it unchanged.
+- A record present in status but absent from numstat (staged change reverted in the worktree) is listed as `Modified`; `git diff HEAD` prints nothing for it (difft is never called), and task 03 maps empty output to `unchanged`.

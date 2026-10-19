@@ -66,4 +66,32 @@ Fixtures are in `tests/fixtures/difft/<case>/` with `old.*`, `new.*`, `difft.jso
 
 ## Handoff notes
 
-_To be filled in by the implementing agent._
+### Public interfaces
+
+- `diff::DiffEngine::diff(&self, root: &Path, target: DiffTarget, file: &ChangedFile) -> Result<RawDiff, DiffError>`.
+- `diff::DiffError::{NotInstalled { binary, source }, TooOld(Version), BadVersion(String), Command { cmd, stderr }, Json(serde_json::Error), Io(io::Error)}`.
+- `diff/difft.rs`: `DifftEngine { pub binary: PathBuf }`; `check_version(binary: &Path) -> Result<Version, DiffError>`; `Version(u32, u32, u32)` (`Ord`, `Display`); `MIN_VERSION`. `RawDiff { status: Status, aligned_lines: Vec<[Option<u32>; 2]>, chunks: Vec<Vec<Entry>> }`, `Status::{Changed, Created, Deleted, Unchanged}`, `Entry { lhs, rhs: Option<SideEntry> }`, `SideEntry { line_number: u32, changes: Vec<Change> }`, `Change { start, end: usize }`.
+- `diff/model.rs`: `FileDiff { lhs, rhs: Option<SideText>, rows: Vec<Row>, hunks: Vec<RowRange> }`, `SideText { lines, kinds, changes: Vec<Vec<Range<usize>>>, highlights: Vec<Vec<StyledSpan>> }`, `LineKind::{Unchanged, Changed, Added, Removed}`, `Row { lhs, rhs: Option<u32> }`, `type RowRange = Range<usize>`.
+- `diff::align::build(raw: &RawDiff, content: &FileContent, tab_width: usize) -> FileDiff`.
+- `highlight::highlighter::StyledSpan { pub range: Range<usize> }` placeholder.
+
+### Decisions and deviations
+
+- **Version check runs after config load** (spec §4 steps 4/5 swapped): the binary path comes from `config.difft.binary`. It runs after logging init and logs the version at `debug`.
+- **`target: DiffTarget` added to `diff`** (task and spec omitted it); the git invocation uses `target.rev()`. Spec §7 updated.
+- **Empty stdout with exit 0 → `Status::Unchanged`**, not an error: git doesn't call the external diff when the worktree matches `HEAD` (staged change reverted). Verified on git with a `1 MM` record. Spec §7 and task 02's handoff note corrected.
+- **`RawDiff` is the serde type itself**; no second set of types. Still only used inside `diff/` and by callers passing it to `build`.
+- **Version parsing:** first whitespace-separated word on the first line that reads as `X.Y.Z` after trimming leading non-digits (`v0.71.0`, `difftastic0.71.0`, `0.73.0-dev` all parse). No `regex` dependency.
+- **Sides from content, rows/kinds from difft.** Mismatches (file edited between `read_content` and diffing) clamp and log one `warn`; lines can then be missing from rows. Accepted: the workflow is review, close, then edit. Task 11's "rows cover each line exactly once" holds for files not edited mid-run.
+- **Tab stops by display width** (`unicode-width`), consistent with `vim::wrap`. `tab_width = 0` is treated as 1.
+- **Spans snapped to char boundaries** after clamping (lossy UTF-8 decoding shifts difft's byte offsets), so slicing `lines[i]` with a span never panics.
+- `CR` stripped per line (`str::lines()` plus a trailing lone `\r`).
+- **`RowRange` is `Range<usize>`** (type alias), not a new struct.
+- **Dead code:** one `#[allow(dead_code, reason = "used by task 07; remove then")]` on `mod diff;` in `main.rs` (`expect` fails under `cargo test` since tests use the items). `StyledSpan` has its own `allow` for task 04. Tasks 04 and 07 updated.
+- Chunk `line_number` is 0-based (spec §7 now says so).
+- Verified on a scratch repo: modified, deleted, staged rename, staged add, untracked, empty untracked, CRLF+tabs, staged-then-reverted all build a `FileDiff`; a missing binary fails startup with the install hint.
+
+### Left undone / flagged
+
+- **Tabs in comments:** `SideText::lines` are tab-expanded, so `selected_text`/context built from them (tasks 06/09) contain spaces where the source has tabs. Flagged as an open question in task 06.
+- A `.gitattributes` `diff=<driver>` with `diff.<driver>.command` overrides `GIT_EXTERNAL_DIFF`; the output then fails JSON parsing → per-file error. Accepted.

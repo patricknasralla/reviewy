@@ -108,9 +108,9 @@ loop {
 1. Install panic hook (restore terminal, then color-eyre report) and signal flag.
 2. Resolve repo root: `git rev-parse --show-toplevel`. Not a repo → error and exit.
 3. Resolve base commit: `git rev-parse HEAD`. No commits → error and exit (v1).
-4. Check `difft --version`. Missing → error with install hint and exit.
-5. Load config (built-in defaults, global, then project override).
+4. Load config (built-in defaults, global, then project override).
    - If `REVIEWY_LOG` is set: create `.reviewy/` (as in step 7) and start logging. Done here so later steps can log.
+5. Check `<difft.binary> --version` (the binary path comes from config). Missing or too old → error with install hint and exit.
 6. Collect changed files (§6). None → print "No changes" and exit.
 7. Ensure `.reviewy/` exists and contains a `.gitignore` with `*` (ignores the whole folder without touching the user's root `.gitignore`).
 8. If `.reviewy/comments.json` exists → "keep / discard" dialog.
@@ -254,7 +254,7 @@ If any limit is exceeded, show a modal: "Large file (N lines, X KB, longest line
 
 ```rust
 trait DiffEngine {
-    fn diff(&self, file: &ChangedFile) -> Result<RawDiff, DiffError>;
+    fn diff(&self, root: &Path, target: DiffTarget, file: &ChangedFile) -> Result<RawDiff, DiffError>;
 }
 ```
 
@@ -275,6 +275,8 @@ Environment for all difft runs: `DFT_UNSTABLE=yes`, `DFT_DISPLAY=json` (and `--d
   DFT_UNSTABLE=yes difft --display json /dev/null <path>
   ```
   Mirrors what git passes for an added file. difft reports `"status": "created"` (an empty file reports `"unchanged"`). Without `DFT_UNSTABLE=yes` difft exits 2.
+
+If git prints nothing (exit 0), the worktree matches `HEAD` (e.g. a staged change reverted in the worktree): git never calls difft, and the result is treated as `unchanged`.
 
 Results are cached per file for the session. difft takes ~1 s on a 4000-line file with many changes; since the loop is synchronous, draw a "Diffing…" status message before invoking it.
 
@@ -298,7 +300,7 @@ Results are cached per file for the session. difft takes ~1 s on a 4000-line fil
 
 - `status`: `changed`, `created`, `deleted`, `unchanged`. Only `changed` has `aligned_lines` and `chunks`.
 - `aligned_lines`: whole-file row alignment, `[lhs | null, rhs | null]`, 0-based line indices. It always ends with one phantom pair one past the last line (with or without a trailing newline).
-- `chunks`: only lines with changes. A side may appear with `changes: []` (that line is paired with a changed line but has no changed tokens itself).
+- `chunks`: only lines with changes. `line_number` is 0-based, like `aligned_lines`. A side may appear with `changes: []` (that line is paired with a changed line but has no changed tokens itself).
 - `changes[].start/end`: **byte** offsets into the **raw** line (before tab expansion; `\t` is one byte). Zero-width spans (`start == end`) occur.
 - `language`: not reliable (e.g. `"Text (exceeded DFT_GRAPH_LIMIT)"`, `"Text (2 Python parse errors, …)"`). Ignored; language is detected by extension (§9).
 - When difft falls back to line-based diffing (parse errors, graph limit) the shape is unchanged.
@@ -308,7 +310,7 @@ The schema is unstable; parsing is isolated in `difft.rs` and should be tolerant
 
 ### Minimum difft version
 
-Minimum version: **0.71.0**. Checked at startup by parsing `difft --version` output (format: `Difftastic 0.71.0`). If difft is missing or too old: hard error with install hint (v1 is a personal tool; the user ensures it's installed).
+Minimum version: **0.71.0**. Checked at startup by parsing the first line of `difft --version` (format: `Difftastic 0.71.0`; the first word reading as `X.Y.Z` is used, so prefix changes don't break it). If difft is missing or too old: hard error with install hint (v1 is a personal tool; the user ensures it's installed).
 
 ## 8. Diff model and alignment
 
@@ -340,6 +342,8 @@ Alignment (`align.rs`):
 - `created` / untracked: all rows `{ lhs: None, rhs: Some(i) }`, all lines `Added`. `deleted`: mirror.
 - `unchanged` (pure rename, empty untracked file): rows paired 1:1, all `Unchanged`.
 - Hunks are maximal runs of rows containing any non-`Unchanged` line.
+- Sides come from the file content (§6), rows and kinds from difft. If they disagree (file edited between reading and diffing), out-of-range indices and spans are clamped and a warning is logged; lines may then be missing from the rows. Accepted: the workflow is review, close, then edit.
+- Tab stops are measured in display columns (`unicode-width`). Spans are snapped to char boundaries (lossy UTF-8 decoding can shift difft's byte offsets).
 
 ## 9. Syntax highlighting and themes
 

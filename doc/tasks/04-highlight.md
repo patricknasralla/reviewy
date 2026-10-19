@@ -8,7 +8,7 @@ Read first: `doc/spec.md` §9 (all of it; it records the verified crate versions
 
 ## Context
 
-Reviewy renders files side by side like an editor. Each side (`SideText` in `diff/model.rs`, task 03) holds tab-expanded lines and an empty `highlights: Vec<Vec<StyledSpan>>` that this task fills. `StyledSpan` exists as a placeholder in `highlight/highlighter.rs`; extend it there. The bundled theme is `default_theme/tokyo-night.json` (four variants; default **Tokyo Night Moon**).
+Reviewy renders files side by side like an editor. Each side (`SideText` in `diff/model.rs`, task 03) holds tab-expanded lines and an empty `highlights: Vec<Vec<StyledSpan>>` that this task fills. `StyledSpan` exists as a placeholder in `highlight/highlighter.rs`; extend it there and remove its `#[allow(dead_code)]`. The bundled theme is `default_theme/tokyo-night.json` (four variants; default **Tokyo Night Moon**).
 
 ## Deliverables
 

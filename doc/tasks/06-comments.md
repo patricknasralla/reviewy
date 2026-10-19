@@ -24,6 +24,7 @@ The reviewer selects lines or text in the diff view and writes a comment. On exi
   - `count_for(file) -> usize` (explorer).
 - `CommentDraft` holds everything except `id`. A helper builds it from a selection:
   `fn draft(file, side, lines, cols: Option<ColRange>, language: Option<&str>, side_lines: &[String], context_lines: usize, body: String) -> CommentDraft`. It fills `selected_text` (the selected chars for charwise selections, whole lines otherwise) and `context` (up to N lines before/after on the same side, 1-based numbers).
+  - **Open question (from task 03):** `SideText::lines` are tab-expanded, so `selected_text` and context built from them contain spaces where the source has tabs (matters for Makefiles, Go). Decide with the developer whether to keep raw lines in `SideText` (plus a raw ↔ expanded column mapping in task 09) or accept it.
 - `fn prefill_body(selected_text, language: Option<&str>) -> String`: fenced code block tagged with the language, using a backtick fence one longer than the longest backtick run in the text (minimum 3), followed by a newline so the cursor starts on an empty line below the fence.
 
 ### `comments/store.rs`
