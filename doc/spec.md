@@ -109,7 +109,8 @@ loop {
 2. Resolve repo root: `git rev-parse --show-toplevel`. Not a repo → error and exit.
 3. Resolve base commit: `git rev-parse HEAD`. No commits → error and exit (v1).
 4. Check `difft --version`. Missing → error with install hint and exit.
-5. Load config (global, then project override).
+5. Load config (built-in defaults, global, then project override).
+   - If `REVIEWY_LOG` is set: create `.reviewy/` (as in step 7) and start logging. Done here so later steps can log.
 6. Collect changed files (§6). None → print "No changes" and exit.
 7. Ensure `.reviewy/` exists and contains a `.gitignore` with `*` (ignores the whole folder without touching the user's root `.gitignore`).
 8. If `.reviewy/comments.json` exists → "keep / discard" dialog.
@@ -126,8 +127,11 @@ loop {
 
 ```
 src/
-  main.rs              clap args, hooks/signals, terminal setup/teardown, event loop
-  config.rs            reviewy.toml loading & merging, defaults
+  main.rs              hooks/signals, terminal setup/teardown, event loop
+  cli.rs               clap args
+  config.rs            reviewy.toml loading & merging
+  config/
+    defaults.toml      built-in defaults (embedded, first merge layer)
   git.rs               repo root, base SHA, status parsing, `git show`, binary detection
   diff.rs              DiffEngine trait; declares submodules
   diff/
@@ -149,9 +153,9 @@ src/
     keys.rs            key/chord/count parser → vim::Command
     motion.rs          Motion enum, TextView trait, motion application
     wrap.rs            soft-wrap layout (shared by diff view, editor, gj/gk)
-  app.rs               declares submodules
+  app.rs               App struct; declares submodules
   app/
-    state.rs           App, Screen, Mode, modal stack, per-file view state
+    state.rs           Screen, Mode, modal stack, per-file view state
     actions.rs         Action enum, vim::Command → Action mapping, App::apply
   ui.rs                declares submodules; top-level draw()
   ui/
@@ -640,9 +644,11 @@ Replaceable via `comments.preamble` in config.
 
 Files (TOML), merged in order, later overriding earlier:
 
-1. Built-in defaults.
+1. Built-in defaults (`src/config/defaults.toml`, embedded; every non-optional key is set there).
 2. `~/.config/reviewy/reviewy.toml` (XDG config dir via `etcetera`).
 3. `<repo>/.reviewy/reviewy.toml`.
+
+Tables deep-merge per key; arrays replace. Unknown keys and wrong types are errors naming the offending file.
 
 ```toml
 [ui]
@@ -672,10 +678,10 @@ context_lines = 3
 ## 14. Errors, signals, logging
 
 - **App errors:** `color-eyre` (`eyre::Result`) in `main`/`app`; `thiserror` enums in `git`, `diff`, `highlight`, `comments`.
-- **Panic hook:** restore terminal (leave alternate screen, disable raw mode), then delegate to color-eyre's hook.
+- **Panic hook:** restore terminal (leave alternate screen, disable raw mode), then delegate to color-eyre's hook. Errors returned from the event loop also restore the terminal before being reported.
 - **Signals:** `signal-hook::flag::register` for SIGTERM, SIGHUP, SIGINT onto an `Arc<AtomicBool>`; the loop saves and exits when set. In raw mode Ctrl-c is a key event (ignored), not SIGINT.
 - **Recoverable per-file errors** (difft fails, unparsable JSON, unreadable file) show a status message; the app continues.
-- **Logging:** `tracing` + `tracing-subscriber` writing to `.reviewy/reviewy.log` (never stdout/stderr while the TUI is up). Level via `REVIEWY_LOG` env var; off/warn by default.
+- **Logging:** `tracing` + `tracing-subscriber` writing to `.reviewy/reviewy.log` (never stdout/stderr while the TUI is up). Opt-in: the subscriber is installed only when `REVIEWY_LOG` is set (an `EnvFilter` directive, e.g. `debug`); otherwise `tracing` macros are no-ops and no log file is created.
 
 ## 15. Dependencies
 

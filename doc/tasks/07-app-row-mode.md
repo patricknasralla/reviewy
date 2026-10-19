@@ -8,13 +8,15 @@ Read first: `doc/spec.md` §3 (workflow), §4 (event loop), §10 (UI: screens, e
 
 ## Context
 
-Modules available: `config`, `git` (changed files, content, limits), `diff` (`DifftEngine`, `align::build` → `FileDiff`), `highlight` (`Theme`, `apply`), `vim` (`KeyParser` → `Command`, motions, wrap), `comments` (model only; this task only holds an empty `CommentSet`). The event loop in `main.rs` exists from task 01 with a stub `App`; replace the stub.
+Modules available: `config`, `git` (changed files, content, limits), `diff` (`DifftEngine`, `align::build` → `FileDiff`), `highlight` (`Theme`, `apply`), `vim` (`KeyParser` → `Command`, motions, wrap), `comments` (model only; this task only holds an empty `CommentSet`). The event loop in `main.rs` (`run()`) exists from task 01 with a stub `App` (in `src/app.rs`) and an inline `Ctrl-q`/`Resize` match; replace both: build `App` in `main` and route events through `KeyParser` → `App::apply`. Keep resize → `dirty`.
 
 ## Deliverables
 
-### `app/state.rs`
+### `app.rs` and `app/state.rs`
 
+- `App` is defined in `app.rs` (task 01 decision); `app/state.rs` holds the supporting state types (`Mode`, `Screen`, `Modal`, `FileView`).
 - `App` owns everything: config, theme, repo root, base commit, `Vec<ChangedFile>`, per-file cache `HashMap<PathBuf, FileView>` (a `FileDiff` plus per-file view state: active side, cursor row, scroll), current file index, `Mode` (`Explorer`, `Row`; tasks 08/09 add `Cursor`, `Visual`, `VisualLine`, `Editor`), modal stack `Vec<Modal>`, status message, `dirty`, `should_quit`, `KeyParser`.
+- Remove the `#[allow(dead_code)]` on `UiConfig` in `config.rs` once `wrap` is read.
 - Leave a `comments: CommentSet` field in place (empty, base from the base commit) so task 09 wires it in without restructuring.
 
 ### `app/actions.rs`

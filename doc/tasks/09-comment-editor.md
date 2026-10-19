@@ -26,6 +26,7 @@ Task 08 builds a `CommentTarget` when Enter is pressed in Cursor/Visual/VisualLi
 - **Delete** (`D` in Row mode on a commented line): "Delete comment #N?" modal; Enter removes it. `D` on an uncommented line: status message.
 - **Close editor** (Esc): "Close comment?" modal; Enter closes, Esc returns to editing. On close, if the body is empty or whitespace, remove the comment.
 - `Ctrl-q` inside the editor still opens the quit modal.
+- Remove the `#[allow(dead_code)]` on `Config` in `config.rs` once `comments.context_lines` is read.
 
 ### Rendering
 

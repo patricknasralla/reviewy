@@ -64,7 +64,9 @@ The open-file order the app will use (task 07): `read_content` → `check_limits
 
 ### `main.rs`
 
-Add startup steps from §4: base commit (step 3) and collecting changed files (step 6). No changed files → print "No changes" and exit 0 before entering the terminal. Store the base commit and the file list where the `App` stub can take them (task 07 builds the real `App`).
+Add startup steps from §4 at the `// task 02:` markers task 01 left: base commit (step 3) and collecting changed files (step 6). No changed files → print "No changes" and exit 0 before entering the terminal. Store the base commit and the file list where the `App` stub can take them (task 07 builds the real `App`).
+
+Remove the `#[allow(dead_code)]` on `LimitsConfig` and `IgnoreConfig` in `config.rs` once you read them.
 
 ## Tests
 
@@ -75,7 +77,7 @@ Unit tests over inline byte strings (no git repo needed):
 
 ## Acceptance
 
-- In a repo with changes, startup collects the files without errors (log them at `debug` to `.reviewy/reviewy.log` to check).
+- In a repo with changes, startup collects the files without errors (log them at `debug`; run with `REVIEWY_LOG=debug` to get `.reviewy/reviewy.log`, logging is opt-in).
 - In a clean repo, `reviewy` prints "No changes" and exits 0.
 - In a repo with no commits, it prints the no-commits error.
 - fmt, clippy, tests clean.

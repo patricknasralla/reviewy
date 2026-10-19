@@ -52,9 +52,37 @@ Reviewy is a terminal UI for reviewing a git repo's uncommitted changes side by 
 - `cargo run` outside a git repo prints an error and exits non-zero.
 - `cargo run -- HEAD~1` exits with the "not supported in v1" error.
 - `kill <pid>` (SIGTERM) exits cleanly and restores the terminal.
-- `.reviewy/.gitignore` exists after a run; `.reviewy/reviewy.log` is created.
+- `.reviewy/.gitignore` exists after a run; `.reviewy/reviewy.log` is created only when `REVIEWY_LOG` is set.
 - fmt, clippy, tests clean.
 
 ## Handoff notes
 
-_To be filled in by the implementing agent._
+### Public interfaces
+
+- `cli::Cli { pub diff_args: Vec<String> }` (clap derive, `src/cli.rs`).
+- `app::App { pub dirty: bool, pub should_quit: bool }` (`#[derive(Default)]`, defined in `src/app.rs`). `app/state.rs` is a stub for `Mode`, `Screen`, modal stack, per-file view state.
+- `ui::draw(frame: &mut Frame, app: &App)`: draws nothing yet.
+- `git::repo_root() -> Result<PathBuf, GitError>`; `GitError::{NotARepo, Io(io::Error)}`.
+- `config::load(repo_root: &Path) -> color_eyre::Result<Config>`. `Config { ui: UiConfig, limits: LimitsConfig, ignore: IgnoreConfig, comments: CommentsConfig, difft: DifftConfig }`:
+  - `UiConfig { theme: String, theme_variant: Option<String>, wrap: bool, tab_width: usize }`
+  - `LimitsConfig { max_lines, max_bytes, max_line_length: usize }`
+  - `IgnoreConfig { paths: Vec<String> }`
+  - `CommentsConfig { context_lines: usize, preamble: Option<String> }`
+  - `DifftConfig { binary: PathBuf }`
+- `main.rs` helpers: `ensure_reviewy_dir(root) -> io::Result<PathBuf>` (creates `.reviewy/` + `.gitignore`, returns the dir), `init_logging`, `enter_terminal`, `restore_terminal`, `run(terminal, terminate)`.
+
+### Decisions and deviations
+
+- **Logging is opt-in** (spec §4, §14 updated): the subscriber is installed only when `REVIEWY_LOG` is set; `.reviewy/` is then created right after config load. Otherwise `.reviewy/` is created after the `// task 02` changed-files marker, so a clean repo exits with "No changes" without creating it.
+- **Defaults live in `src/config/defaults.toml`** (embedded with `include_str!`), the first merge layer. No `Default` impls or `#[serde(default)]`. Adding a non-optional config field means adding it to `defaults.toml` (the `no_files_gives_defaults` test fails otherwise).
+- **Validation:** after merging each file, the merged table is deserialized; any error is attributed to that file (`invalid <path>: …`). The test entry point is `from_sources(&[(&Path, &str)])` rather than two `Option<&str>`.
+- **`#[allow(dead_code, reason = "all fields read by task NN; remove then")]`** on each config struct (`expect` fails under `cargo test` because tests read the fields). Remove each when its fields are all read: `LimitsConfig`, `IgnoreConfig` → 02; `DifftConfig` → 03; `UiConfig` → 07; `Config` → 09; `CommentsConfig` → 10.
+- **`App` lives in `app.rs`**, not `app/state.rs` (spec §5 updated). `cli.rs` added (spec §5 updated).
+- **clap:** `DIFF_ARGS` uses `trailing_var_arg` + `allow_hyphen_values`, so `reviewy --staged` reaches the "not supported in v1" error.
+- **Terminal restore** runs on panic (hook) and after `run()` returns, `Ok` or `Err`.
+- `crossterm` is a direct dependency pinned to 0.29, the version ratatui 0.30 uses (`cargo tree -d` shows no duplicate).
+- No separate `eyre` crate: use `color_eyre::{Result, eyre}`.
+
+### Left undone
+
+- Event loop handles `Ctrl-q` and `Resize` inline in `run()`; task 07 replaces this with `KeyParser` → `App::apply`. `App` is constructed inside `run()` with `dirty: true`; task 07 builds it in `main` from config, files etc.

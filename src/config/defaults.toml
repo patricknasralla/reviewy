@@ -1,0 +1,23 @@
+# Built-in defaults: the first layer of the config merge.
+# Every non-optional field must be set here.
+
+[ui]
+theme = "Tokyo Night Moon"  # variant name, or path to a theme JSON
+# theme_variant = "..."     # required only when `theme` is a path
+wrap = true
+tab_width = 4
+
+[limits]
+max_lines = 5000
+max_bytes = 1048576
+max_line_length = 1000
+
+[ignore]
+paths = []  # globs, repo-relative
+
+[comments]
+context_lines = 3
+# preamble = "..."  # replaces the default instructions in comments.md
+
+[difft]
+binary = "difft"

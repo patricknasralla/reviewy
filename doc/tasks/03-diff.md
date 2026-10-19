@@ -25,7 +25,7 @@ pub trait DiffEngine {
 ### `diff/difft.rs`
 
 - `DifftEngine { binary: PathBuf }` (from `config.difft.binary`).
-- `check_version(binary) -> Result<Version, DiffError>`: run `<binary> --version`, parse `Difftastic X.Y.Z` (first line). Missing binary or version < 0.71.0 → error with an install hint (`cargo install difftastic`). Wire into `main.rs` as startup step 4 (§4).
+- `check_version(binary) -> Result<Version, DiffError>`: run `<binary> --version`, parse `Difftastic X.Y.Z` (first line). Missing binary or version < 0.71.0 → error with an install hint (`cargo install difftastic`). Wire into `main.rs` at the `// task 03:` marker (startup step 4, §4). Remove the `#[allow(dead_code)]` on `DifftConfig` in `config.rs`.
 - Invocation exactly as §7:
   - Tracked (`Modified`, `Added`, `Deleted`): `git diff HEAD -- <path>` with env `GIT_EXTERNAL_DIFF=<binary>`, `DFT_DISPLAY=json`, `DFT_UNSTABLE=yes`.
   - `Renamed { from }`: `git diff HEAD -- <from> <path>` (both paths, or git reports `created`).
@@ -60,7 +60,7 @@ Fixtures are in `tests/fixtures/difft/<case>/` with `old.*`, `new.*`, `difft.jso
 
 ## Acceptance
 
-- `DifftEngine::diff` + `align::build` produce a `FileDiff` for every viewable file in a real repo with mixed changes (check with a temporary debug log; remove it after).
+- `DifftEngine::diff` + `align::build` produce a `FileDiff` for every viewable file in a real repo with mixed changes (check with a temporary debug log, run with `REVIEWY_LOG=debug`; remove it after).
 - Startup fails with the install hint when `config.difft.binary` points to a missing binary.
 - fmt, clippy, tests clean.
 
