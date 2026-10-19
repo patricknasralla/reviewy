@@ -34,7 +34,6 @@ pub struct UiConfig {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-#[allow(dead_code, reason = "all fields read by task 02; remove then")]
 pub struct LimitsConfig {
     pub max_lines: usize,
     pub max_bytes: usize,
@@ -43,7 +42,6 @@ pub struct LimitsConfig {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-#[allow(dead_code, reason = "all fields read by task 02; remove then")]
 pub struct IgnoreConfig {
     pub paths: Vec<String>,
 }

@@ -132,7 +132,10 @@ src/
   config.rs            reviewy.toml loading & merging
   config/
     defaults.toml      built-in defaults (embedded, first merge layer)
-  git.rs               repo root, base SHA, status parsing, `git show`, binary detection
+  git.rs               GitError, DiffTarget, repo root, base SHA; declares submodules
+  git/
+    status.rs          changed files: status/numstat parsing, classification, binary detection, ignore globs
+    content.rs         file content (both sides), large-file check
   diff.rs              DiffEngine trait; declares submodules
   diff/
     model.rs           FileDiff, Row, LineKind, change spans
@@ -174,7 +177,7 @@ All git access is via the `git` CLI (`std::process::Command`), run from the repo
 
 ### Changed files
 
-`git status --porcelain=v2 -z --untracked-files=all` (with `-M` rename detection as git provides by default for staged renames). Parse into:
+`git status --porcelain=v2 -z --untracked-files=all` (with `-M` rename detection as git provides by default for staged renames), run with `GIT_OPTIONAL_LOCKS=0` so its index refresh never blocks a concurrent git command. Parse into:
 
 ```rust
 enum FileStatus {
@@ -203,7 +206,7 @@ struct ChangedFile {
 
 Porcelain v2 record types (with `-z`):
 
-- `1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>` — ordinary change.
+- `1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>` — ordinary change. Classified by modes, not XY, since only HEAD vs worktree matters: `mH` and `mW` both `000000` → dropped (no change vs HEAD, e.g. `AD`); `mH` zero → `Added` (includes intent-to-add `.A`); `mW` zero → `Deleted`; otherwise `Modified`.
 - `2 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <score> <path>\0<origPath>` — rename/copy; the original path is the next NUL-separated field.
 - `u <XY> <sub> ...` — unmerged → `Conflicted`.
 - `? <path>` — untracked.
@@ -222,16 +225,16 @@ Rename records in `-z` numstat output are `0\t0\t\0<old>\0<new>\0` (empty path f
 ### Binary detection
 
 - Tracked files: from the numstat pass (`-\t-`). No blobs are read at startup.
-- Untracked files: binary if the file contains a NUL byte in its first 8000 bytes (git's heuristic).
+- Untracked files: `git diff --no-index --numstat -z -- /dev/null <path>` per file (exits 1 on difference; that is success here). Same `-\t-` rule, so `.gitattributes` applies to untracked files too. On failure (e.g. unreadable file) log a warning and treat as text.
 - Binary files are listed with a `B` marker and are not openable (status message on Enter). This filter is required: git passes binary files to difft, which then diffs them as text.
 
 ### File content
 
-- Old side: `git show HEAD:<path>` (or `HEAD:<from>` for renames), captured to memory.
-- New side: read the working-tree file.
+- Old side: `git cat-file blob HEAD:<path>` (or `HEAD:<from>` for renames), captured to memory.
+- New side: read the working-tree file. A symlink's content is its target path (as git stores it), not the target's content.
 - Added/untracked files have no old side; deleted files have no new side.
 - `\r\n` is normalized to `\n` for display; tabs expanded to `tab_width` spaces.
-- `git show HEAD:<missing>` exits 128 (`fatal: path '…' does not exist in 'HEAD'`); treat as a per-file error.
+- `git cat-file blob HEAD:<missing>` exits 128 (`fatal: path '…' does not exist in 'HEAD'`); treat as a per-file error.
 
 ### Large files
 
@@ -243,7 +246,7 @@ Before diffing, check both sides against the limits:
 | `max_bytes` | 1 MiB |
 | `max_line_length` | 1000 chars |
 
-If any limit is exceeded, show a modal: "Large file (N lines, X KB, longest line L). View anyway?" — Enter views, Esc cancels. `max_line_length` catches minified/obfuscated files that are few lines but huge.
+If any limit is exceeded, show a modal: "Large file (N lines, X KB, longest line L). View anyway?" (each number is the max over both sides) — Enter views, Esc cancels. `max_line_length` catches minified/obfuscated files that are few lines but huge.
 
 ## 7. Diff engine
 

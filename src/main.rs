@@ -32,6 +32,7 @@ use tracing_subscriber::EnvFilter;
 
 use app::App;
 use cli::Cli;
+use git::DiffTarget;
 
 type Tui = Terminal<CrosstermBackend<Stdout>>;
 
@@ -54,26 +55,34 @@ fn main() -> Result<()> {
     }
 
     let root = git::repo_root()?;
-    // task 02: base commit
+    let base_commit = git::base_commit(&root)?;
     // task 03: difft version check
-    let _config = config::load(&root)?;
+    let config = config::load(&root)?;
     if let Ok(directive) = std::env::var("REVIEWY_LOG") {
         init_logging(&ensure_reviewy_dir(&root)?, &directive)?;
     }
-    // task 02: collect changed files; none → print "No changes" and exit 0
+    let ignore = git::build_ignore(&config.ignore.paths)?;
+    let files = git::changed_files(&root, DiffTarget::WorkingTreeVsHead, &ignore)?;
+    if files.is_empty() {
+        println!("No changes");
+        return Ok(());
+    }
+    tracing::debug!(?files, "changed files");
     ensure_reviewy_dir(&root)?;
 
+    let app = App {
+        base_commit,
+        files,
+        ..App::default()
+    };
     let mut terminal = enter_terminal()?;
-    let result = run(&mut terminal, &terminate);
+    let result = run(&mut terminal, &terminate, app);
     restore_terminal()?;
     result
 }
 
-fn run(terminal: &mut Tui, terminate: &AtomicBool) -> Result<()> {
-    let mut app = App {
-        dirty: true,
-        ..App::default()
-    };
+fn run(terminal: &mut Tui, terminate: &AtomicBool, mut app: App) -> Result<()> {
+    app.dirty = true;
     loop {
         if terminate.load(Ordering::Relaxed) {
             // task 10: save comments
