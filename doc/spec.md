@@ -92,8 +92,9 @@ loop {
     if terminate_flag.load() { save(); break; }
     if crossterm::event::poll(timeout)? {
         let event = crossterm::event::read()?;
-        let commands = input.handle(event, &app.mode);   // vim::Command
-        for cmd in commands { app.apply(app.map_command(cmd)); } // → Action
+        if let Some(input) = keys.handle(key_event) {    // vim::Input { command, count }
+            app.apply(app.map_input(input));             // → Action
+        }
     }
     if app.dirty { terminal.draw(|f| ui::draw(f, &app))?; app.dirty = false; }
     if app.should_quit { save(); break; }
@@ -479,6 +480,7 @@ The cursor is a whole line on the active column. Rows where the active side has 
 |---|---|
 | `h` / `l` | Switch active column (left/right); jump to nearest row with a line on that side |
 | `j` / `k` | Next/previous logical line |
+| arrows | Aliases for `h` `j` `k` `l` (row and cursor modes) |
 | `gg` / `G` | First/last line |
 | `Ctrl-d` / `Ctrl-u` | Half page down/up |
 | `g]` / `g[` | Next/previous hunk |
@@ -520,7 +522,7 @@ All cursor-mode motions extend the selection. Selections cannot cross columns.
 
 ### Vim engine (`src/vim/`)
 
-- `keys.rs`: stateful parser over key events. Accumulates an optional count and multi-key chords (`gg`, `g]`, `gn`, …) and emits `vim::Command`s (motion + count, mode switches, operators such as "comment" / "delete comment"). No chord timeout; Esc clears pending input. Counts are supported (`5j`, `3w`). Keys map to `Command`s through a table so configurable bindings (v1.1+) are a table swap.
+- `keys.rs`: stateful parser over key events. Accumulates an optional count and multi-key chords (`gg`, `g]`, `gn`, …) and emits `vim::Input { command: Command, count: Option<usize> }` (`Command`: motion, mode switches, operators such as "comment" / "delete comment"; `count` is `None` when none was typed, so `G` ≠ `1G`). No chord timeout; Esc clears pending input. Counts are supported (`5j`, `3w`). One key table for all modes; keys map to `Command`s through it so configurable bindings (v1.1+) are a table swap. Arrow keys alias `hjkl`.
 - `vim/` has no dependency on `app/`. The app maps `vim::Command` → `app::Action` in `app/actions.rs` (context-dependent, e.g. Enter in row mode → edit comment or enter cursor mode). The comment editor (v1.1 modal editing) consumes the same `Command`s with its own mapping.
 - `motion.rs`: `Motion` enum (`Left`, `Right`, `Down`, `Up`, `ScreenDown`, `ScreenUp`, `WordForward`, `WordBackward`, `WordEnd`, `LineStart`, `LineEnd`, `FileStart`, `FileEnd`, `HalfPageDown`, `HalfPageUp`, …) applied over:
   ```rust

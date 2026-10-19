@@ -8,7 +8,7 @@ Read first: `doc/spec.md` §11 (mode hierarchy, cursor mode, visual modes, examp
 
 ## Context
 
-Row mode (task 07) moves a whole-line cursor on the active column. Enter on a non-commented line enters Cursor mode at column 0. In Cursor mode the cursor is a character on the active side and cannot leave that column. `v`/`V` start a selection; Esc steps back one level (§11 diagram). Motions come from `vim/motion.rs` over a `TextView` of the active side's lines.
+Row mode (task 07) moves a whole-line cursor on the active column. Enter on a non-commented line enters Cursor mode at column 0. In Cursor mode the cursor is a character on the active side and cannot leave that column. `v`/`V` start a selection; Esc steps back one level (§11 diagram). Motions come from `vim/motion.rs` over a `TextView` of the active side's lines: `motion::apply(motion, count, Cursor { pos, want }, view, &MotionCtx { height, wrap })`. Keep the returned `Cursor` (its `want` is the sticky display column) per file view and pass it back on the next motion. Set `MotionCtx::wrap` to the active column's text width when `ui.wrap` is on, `None` when off; screen motions then move by segment. `gg`/`G`/`Ctrl-d`/`Ctrl-u` behave "as row mode", so they may be better handled by diff rows than by `apply` (which moves by lines).
 
 ## Deliverables
 

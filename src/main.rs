@@ -9,6 +9,7 @@ mod git;
 #[allow(dead_code, reason = "used by task 07; remove then")]
 mod highlight;
 mod ui;
+#[allow(dead_code, reason = "used by task 07; remove then")]
 mod vim;
 
 use std::fs::{self, OpenOptions};
