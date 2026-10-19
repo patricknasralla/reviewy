@@ -130,8 +130,11 @@ src/
   main.rs              hooks/signals, terminal setup/teardown, event loop
   cli.rs               clap args
   config.rs            reviewy.toml loading & merging
-  config/
+  defaults.rs          declares submodules
+  defaults/
     defaults.toml      built-in defaults (embedded, first merge layer)
+    default_theme.rs   bundled theme family JSON and default variant name
+    tokyo-night.json   bundled theme family (embedded)
   git.rs               GitError, DiffTarget, repo root, base SHA; declares submodules
   git/
     status.rs          changed files: status/numstat parsing, classification, binary detection, ignore globs
@@ -141,7 +144,7 @@ src/
     model.rs           FileDiff, Row, LineKind, change spans
     difft.rs           DifftEngine: spawn, parse JSON, version check
     align.rs           build whole-file aligned rows from difft output
-  highlight.rs         declares submodules; apply() entry point
+  highlight.rs         declares submodules; re-exports Highlighter, Theme
   highlight/
     languages.rs       language registry: extension → grammar + queries
     highlighter.rs     tree-sitter-highlight → per-line style spans
@@ -352,7 +355,7 @@ Alignment (`align.rs`):
 - Crates: `tree-sitter`, `tree-sitter-highlight`, grammar crates `tree-sitter-rust`, `tree-sitter-python`, `tree-sitter-c-sharp`, `tree-sitter-typescript` (TS + TSX), `tree-sitter-javascript` (queries only, required by TS). Versions in §15.
 - Highlight queries: the grammar crates' bundled queries (MIT). Zed's own `.scm` queries are GPL and are **not** used.
 - Language detection by extension: `.rs`; `.py`, `.pyi`; `.cs`; `.ts`, `.mts`, `.cts`; `.tsx`. Unknown → plain text.
-- Each side is highlighted once, on file open, into per-line `StyledSpan`s, then cached.
+- Each side is highlighted once, on file open, into per-line `StyledSpan`s, then cached. A `Highlighter` built once in `main` from the resolved theme (owned by `App`) configures each language on first use; `Highlighter::apply(&mut FileDiff, &ChangedFile)` highlights each side's normalized lines (CR-stripped, tab-expanded, so span offsets index `SideText::lines` directly). The old side of a rename is detected by its old path.
 - API (0.27): `Highlighter::highlight(config, source, None, None, injection_callback)` — 5 arguments.
 
 Per-language `HighlightConfiguration` (highlights / injections / locals):
@@ -371,9 +374,9 @@ Per-language `HighlightConfiguration` (highlights / injections / locals):
 
 Capture → theme key mapping:
 
-- Pass the theme's `syntax` key list (after applying the remap below) to `HighlightConfiguration::configure()`. tree-sitter-highlight matches capture names to the longest dotted prefix itself, so exact matches and suffix stripping (`property.definition` → `property`) need no extra code. Unmatched → default foreground.
-- Captures that are not highlights are never configured: names starting with `_`, `injection.` or `local.`, and `glimmer`.
-- Remap table, applied before matching:
+- Pass the theme's `syntax` key list (after applying the remap below) to `HighlightConfiguration::configure()`. tree-sitter-highlight matches each capture to the key with the most dotted parts that all appear in the capture name, so exact matches and suffix stripping (`property.definition` → `property`) need no extra code. Unmatched → default foreground.
+- Captures that are not highlights (`_*`, `injection.*`, `local.*`, `glimmer`) need no handling: no theme key matches them.
+- Remap table for captures the theme has no key for. Captures can't be renamed, so each alias is passed to `configure()` after the theme keys, styled like its target key:
   ```rust
   const REMAP: &[(&str, &str)] = &[
       ("escape", "string.escape"), // rust, python
@@ -392,13 +395,15 @@ Capture → theme key mapping:
 
 Theme resolution:
 
-1. `theme` in config is either a variant name (e.g. `"Tokyo Night Moon"`), matched against variant names across all theme families, or a path to a theme JSON file plus `theme_variant`.
+0. `ui.theme` unset → the bundled default (`default_theme::VARIANT` in `src/defaults/default_theme.rs`). The default theme is not a `defaults.toml` key, because its name and its compiled-in JSON must change together.
+1. `theme` in config is either a variant name (e.g. `"Tokyo Night Moon"`), matched against variant names across all theme families, or a path to a theme JSON file plus `theme_variant`. A relative path is relative to the config file that sets it.
 2. Names are looked up in `~/.config/reviewy/themes/*.json`, then bundled themes. User themes shadow bundled ones.
 3. No lookup in Zed's own directories — Reviewy's themes are decoupled so they can diverge.
+4. Any failure (name not found, unreadable or invalid file, missing variant or required key) logs a warning, falls back to the bundled default and shows the error in the status line at startup.
 
-Bundled: `default_theme/tokyo-night.json`, compiled in via `include_str!`. It contains four variants (Tokyo Night, Tokyo Night Storm, Tokyo Night Moon, Tokyo Night Light); the default is **Tokyo Night Moon**.
+Bundled: `src/defaults/tokyo-night.json`, compiled in via `include_str!` in `src/defaults/default_theme.rs`. It contains four variants (Tokyo Night, Tokyo Night Storm, Tokyo Night Moon, Tokyo Night Light); the default is **Tokyo Night Moon**.
 
-- Source: [ssaunderss/zed-tokyo-night](https://github.com/ssaunderss/zed-tokyo-night), MIT. License kept at `default_theme/LICENSE`.
+- Source: [ssaunderss/zed-tokyo-night](https://github.com/ssaunderss/zed-tokyo-night), MIT. License kept at `3rd_party/tokyo-night.LICENSE`.
 - Tokyo Night Moon has no `version_control.*` keys, so it uses the `created`/`deleted`/`modified` fallback for diff colors.
 
 ## 10. UI
@@ -651,7 +656,7 @@ Replaceable via `comments.preamble` in config.
 
 Files (TOML), merged in order, later overriding earlier:
 
-1. Built-in defaults (`src/config/defaults.toml`, embedded; every non-optional key is set there).
+1. Built-in defaults (`src/defaults/defaults.toml`, embedded; every non-optional key is set there).
 2. `~/.config/reviewy/reviewy.toml` (XDG config dir via `etcetera`).
 3. `<repo>/.reviewy/reviewy.toml`.
 
@@ -659,7 +664,7 @@ Tables deep-merge per key; arrays replace. Unknown keys and wrong types are erro
 
 ```toml
 [ui]
-theme = "Tokyo Night Moon"           # variant name, or path to a theme JSON
+theme = "Tokyo Night Moon"           # variant name, or path to a theme JSON (relative to this file); unset → bundled default
 # theme_variant = "Tokyo Night Moon" # required only when `theme` is a path
 wrap = true
 tab_width = 4

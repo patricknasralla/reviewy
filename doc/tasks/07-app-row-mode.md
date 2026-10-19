@@ -8,7 +8,7 @@ Read first: `doc/spec.md` §3 (workflow), §4 (event loop), §10 (UI: screens, e
 
 ## Context
 
-Modules available: `config`, `git` (changed files, content, limits), `diff` (`DifftEngine`, `align::build` → `FileDiff`), `highlight` (`Theme`, `apply`), `vim` (`KeyParser` → `Command`, motions, wrap), `comments` (model only; this task only holds an empty `CommentSet`). The event loop in `main.rs` (`run()`) exists from task 01 with a stub `App` (in `src/app.rs`) and an inline `Ctrl-q`/`Resize` match; replace both: build `App` in `main` and route events through `KeyParser` → `App::apply`. Keep resize → `dirty`.
+Modules available: `config`, `git` (changed files, content, limits), `diff` (`DifftEngine`, `align::build` → `FileDiff`), `highlight` (`Theme`, `Highlighter`), `vim` (`KeyParser` → `Command`, motions, wrap), `comments` (model only; this task only holds an empty `CommentSet`). The event loop in `main.rs` (`run()`) exists from task 01 with a stub `App` (in `src/app.rs`) and an inline `Ctrl-q`/`Resize` match; replace both: build `App` in `main` and route events through `KeyParser` → `App::apply`. Keep resize → `dirty`.
 
 ## Deliverables
 
@@ -17,13 +17,13 @@ Modules available: `config`, `git` (changed files, content, limits), `diff` (`Di
 - `App` is defined in `app.rs` (task 01 decision); `app/state.rs` holds the supporting state types (`Mode`, `Screen`, `Modal`, `FileView`).
 - `App` owns everything: config, theme, repo root, base commit, `Vec<ChangedFile>`, per-file cache `HashMap<PathBuf, FileView>` (a `FileDiff` plus per-file view state: active side, cursor row, scroll), current file index, `Mode` (`Explorer`, `Row`; tasks 08/09 add `Cursor`, `Visual`, `VisualLine`, `Editor`), modal stack `Vec<Modal>`, status message, `dirty`, `should_quit`, `KeyParser`.
 - Remove the `#[allow(dead_code)]` on `UiConfig` in `config.rs` once `wrap` is read.
-- Remove the `#[expect(dead_code/unused_imports, reason = "used by task 07")]` attributes task 02 left in `git.rs` (on `mod content` and its `pub use`), `git/status.rs` (`viewable`) and `app.rs` (`base_commit`, `files`), and the `#[allow(dead_code, reason = "used by task 07; remove then")]` task 03 left on `mod diff;` in `main.rs` (fix any warnings it then reveals).
+- Remove the `#[expect(dead_code/unused_imports, reason = "used by task 07")]` attributes task 02 left in `git.rs` (on `mod content` and its `pub use`), `git/status.rs` (`viewable`) and `app.rs` (`base_commit`, `files`, `theme`, `highlighter`, `status`), and the `#[allow(dead_code, reason = "used by task 07; remove then")]` tasks 03/04 left on `mod diff;` and `mod highlight;` in `main.rs` (fix any warnings it then reveals).
 - Leave a `comments: CommentSet` field in place (empty, base from the base commit) so task 09 wires it in without restructuring.
 
 ### `app/actions.rs`
 
 - `Action` enum and `App::apply(Action)`. Map `vim::Command` → `Action` here, depending on the mode and the top modal (the top modal receives input first). Bracketed paste events are ignored in this task.
-- **Open file** pipeline: `git::read_content(root, DiffTarget::WorkingTreeVsHead, file)` → `git::check_limits` → if over limits push the large-file modal (Enter continues, Esc cancels) → set the status "Diffing…" and **force a redraw before** calling `DifftEngine::diff(root, DiffTarget::WorkingTreeVsHead, file)` (via the `DiffEngine` trait; synchronous call, ~1 s on big files) → `align::build` → `highlight::apply` → cache. Unviewable files (`!viewable()`) show a status message instead (§10 messages: "Binary file", "Conflicted file: not viewable in v1", "Submodule: not viewable in v1", "Mode change only: not viewable in v1"). Per-file errors show a status message; the app continues.
+- **Open file** pipeline: `git::read_content(root, DiffTarget::WorkingTreeVsHead, file)` → `git::check_limits` → if over limits push the large-file modal (Enter continues, Esc cancels) → set the status "Diffing…" and **force a redraw before** calling `DifftEngine::diff(root, DiffTarget::WorkingTreeVsHead, file)` (via the `DiffEngine` trait; synchronous call, ~1 s on big files) → `align::build` → `app.highlighter.apply(&mut diff, file)` → cache. Unviewable files (`!viewable()`) show a status message instead (§10 messages: "Binary file", "Conflicted file: not viewable in v1", "Submodule: not viewable in v1", "Mode change only: not viewable in v1"). Per-file errors show a status message; the app continues.
 
 ### Row mode (§11)
 
@@ -49,7 +49,7 @@ Centered overlay (~60% width, up to 80% height) over the diff view, per §10: st
 ### `ui/modals.rs`, `ui/status.rs`
 
 - Generic centered confirm modal (title, message, "Enter: … / Esc: …" hint). Used now for large file ("Large file (N lines, X KB, longest line L). View anyway?") and quit ("Save and quit?").
-- Status line: mode, file path, `line:col` of the active side (1-based), pending keys from `KeyParser::pending()`, transient message (cleared on the next key press).
+- Status line: mode, file path, `line:col` of the active side (1-based), pending keys from `KeyParser::pending()`, transient message (cleared on the next key press). `App::status` is already set at startup when the theme fell back to the default (task 04); show it like any other message.
 
 ## Tests
 

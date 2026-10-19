@@ -2,9 +2,11 @@ mod app;
 mod cli;
 mod comments;
 mod config;
+mod defaults;
 #[allow(dead_code, reason = "used by task 07; remove then")]
 mod diff;
 mod git;
+#[allow(dead_code, reason = "used by task 07; remove then")]
 mod highlight;
 mod ui;
 mod vim;
@@ -34,6 +36,7 @@ use tracing_subscriber::EnvFilter;
 use app::App;
 use cli::Cli;
 use git::DiffTarget;
+use highlight::{Highlighter, Theme};
 
 type Tui = Terminal<CrosstermBackend<Stdout>>;
 
@@ -61,6 +64,22 @@ fn main() -> Result<()> {
     if let Ok(directive) = std::env::var("REVIEWY_LOG") {
         init_logging(&ensure_reviewy_dir(&root)?, &directive)?;
     }
+    let variant = config.ui.theme_variant.as_deref();
+    let (theme, status) = match config
+        .ui
+        .theme
+        .as_deref()
+        .map(|t| Theme::resolve(t, variant))
+    {
+        None => (Theme::bundled_default(), None),
+        Some(Ok(theme)) => (theme, None),
+        Some(Err(e)) => {
+            let theme = Theme::bundled_default();
+            tracing::warn!(%e, "using {}", theme.name);
+            let status = format!("{e}; using {}", theme.name);
+            (theme, Some(status))
+        }
+    };
     let difft_version = diff::difft::check_version(&config.difft.binary)?;
     tracing::debug!(%difft_version, "difftastic");
     let ignore = git::build_ignore(&config.ignore.paths)?;
@@ -73,9 +92,13 @@ fn main() -> Result<()> {
     ensure_reviewy_dir(&root)?;
 
     let app = App {
+        dirty: true,
+        should_quit: false,
         base_commit,
         files,
-        ..App::default()
+        highlighter: Highlighter::new(&theme),
+        theme,
+        status,
     };
     let mut terminal = enter_terminal()?;
     let result = run(&mut terminal, &terminate, app);

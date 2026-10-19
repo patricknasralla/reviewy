@@ -11,7 +11,7 @@ Read first: `doc/spec.md` §16 (testing), then the whole spec once. Read handoff
 - **Integration test** (`tests/pipeline.rs`): build a temp git repo with `tempfile`, commit files, then make one change of each kind — modified, staged add, delete, rename (staged), untracked, binary, mode-only. Run the non-UI pipeline end to end: `git::changed_files` → for each viewable file `read_content` → `DifftEngine::diff` → `align::build` → `highlight::apply`. Assert statuses, markers and that each viewable file yields a `FileDiff` whose rows cover both sides' lines exactly once. Requires `git` and `difft`; skip with a printed note if `difft` isn't on `PATH` (don't fail).
 - **Persistence round trip** (`tests/comments.rs`): save a set into a temp `.reviewy/`, load it back, compare.
 - Resolve "left undone" items from earlier handoff notes, or list them in a `doc/tasks/v1-followups.md` with a reason.
-- Third-party notices: `THIRD_PARTY.md` crediting the grammar crates (MIT; `tree-sitter-typescript` ships no LICENSE file) and the bundled Tokyo Night theme (`default_theme/LICENSE`).
+- Third-party notices: `THIRD_PARTY.md` crediting the grammar crates (MIT; `tree-sitter-typescript` ships no LICENSE file) and the bundled Tokyo Night theme (`3rd_party/tokyo-night.LICENSE`).
 - `README.md`: what it is, requirements (`git`, `difft` ≥ 0.71.0, truecolor terminal), install, key reference (from §11), config example (§13), where comments are written.
 
 ## Manual review checklist

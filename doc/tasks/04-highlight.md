@@ -53,4 +53,32 @@ Resolve the theme at startup after config. Errors abort startup with a message.
 
 ## Handoff notes
 
-_To be filled in by the implementing agent._
+### Public interfaces
+
+`highlight.rs` re-exports `Highlighter` and `Theme`.
+
+- `highlight::theme`: `Theme { name, background, foreground, line_number, active_line_background, added, deleted, modified, conflict, line_added_bg, line_deleted_bg, token_added_bg, token_deleted_bg: Color, syntax: BTreeMap<String, Style> }` (all `Color::Rgb`, alpha already blended). `Theme::resolve(theme: &str, variant: Option<&str>) -> Result<Theme, ThemeError>`, `Theme::bundled_default() -> Theme`, `is_path(&str) -> bool`, `LINE_ALPHA = 0.15`, `TOKEN_ALPHA = 0.35`. `ThemeError::{NotFound, NoVariant, MissingKey, BadColor, Json, Io, Home}`.
+- `highlight::languages::Language::{Rust, Python, CSharp, TypeScript, Tsx}`: `detect(&Path) -> Option<Language>`, `name() -> &'static str` (fence tag).
+- `highlight::highlighter`: `StyledSpan { range: Range<usize>, style: Style }`; `Highlighter::new(&Theme)`, `Highlighter::apply(&self, &mut FileDiff, &ChangedFile)`.
+- `defaults::default_theme::{FAMILY, VARIANT}`: the bundled family JSON (`include_str!`) and the default variant name.
+- `config::UiConfig::theme` is now `Option<String>`.
+- `App` gained `theme: Theme`, `highlighter: Highlighter`, `status: Option<String>`; no longer `Default`, built in full in `main`.
+
+### Decisions and deviations
+
+- **`Highlighter` struct instead of `highlight::apply(&mut FileDiff, path, &Theme)`**: `configure()` indices point into the theme's key list, so the configs belong with the theme's styles. Built once in `main`, owned by `App`; each language's `HighlightConfiguration` is built on first use (`OnceCell`). Spec §9 updated.
+- **No capture-drop step**: `configure()` can't exclude captures; `_*`, `injection.*`, `local.*`, `glimmer` stay unstyled because no theme key matches them. **Remap** is done by passing `escape` to `configure()` after the theme keys, with `string.escape`'s style. `configure()` matches keys whose dotted parts are a subset of the capture's parts (not a prefix). Spec §9 updated.
+- **Default theme lives in `src/defaults/default_theme.rs`, not `defaults.toml`** (developer decision): its name and its compiled-in JSON must change together. `src/config/` renamed to `src/defaults/` (holds `defaults.toml`, `default_theme.rs`, `tokyo-night.json`); `ui.theme` is unset by default and `Option<String>`; unset → `Theme::bundled_default()`. License moved to `3rd_party/tokyo-night.LICENSE`. Spec §5, §9, §13 and tasks 01/11 updated.
+- **`Theme::syntax` is a `BTreeMap`**: deterministic order for `configure()`, which takes the first of equally good matches.
+- **Theme failure falls back** (developer decision; replaces "unknown name → error listing names"): any `resolve` error is logged at `warn`, `Theme::bundled_default()` is used, and `App::status` is set to `"<error>; using <name>"` for task 07 to show. A broken file in the user themes dir also triggers the fallback. Spec §9 updated, task 07 updated.
+- **Theme path relative to the config file** that sets it: `config.rs` rewrites a relative path-like `ui.theme` against the file's directory before merging (task 01 module change). Spec §13 updated.
+- **Required theme keys**: `editor.background`, `editor.foreground`, `editor.line_number`, `editor.active_line.background`, and added/deleted/modified/conflict (`version_control.*`, then `created/deleted/modified/conflict`). Missing → `MissingKey` (→ fallback). Syntax entries without a color keep only their modifiers.
+- **Highlighting runs on `SideText::lines`** (CR-stripped, tab-expanded, joined with `\n`), so span offsets need no mapping. The innermost capture wins; unstyled text has no span.
+- **Renames**: lhs language detected from `Renamed { from }`.
+- **C#** uses highlights only, per the spec table, although the 0.23.5 crate ships injections and locals queries. Accepted by the developer for v1 (C# editors often rely on Roslyn analyzers rather than tree-sitter).
+- **Dead code**: `#[allow(dead_code, reason = "used by task 07; remove then")]` on `mod highlight;` in `main.rs`; `#[expect(dead_code)]` on the three new `App` fields. Task 07 updated to remove them.
+- **Timing** (release, 1000 lines of this crate's Rust): 23 ms on first use (includes building the Rust config), ~8 ms after.
+
+### Left undone
+
+- `ui.theme` paths don't expand `~`.

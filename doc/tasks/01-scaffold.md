@@ -74,7 +74,7 @@ Reviewy is a terminal UI for reviewing a git repo's uncommitted changes side by 
 ### Decisions and deviations
 
 - **Logging is opt-in** (spec §4, §14 updated): the subscriber is installed only when `REVIEWY_LOG` is set; `.reviewy/` is then created right after config load. Otherwise `.reviewy/` is created after the `// task 02` changed-files marker, so a clean repo exits with "No changes" without creating it.
-- **Defaults live in `src/config/defaults.toml`** (embedded with `include_str!`), the first merge layer. No `Default` impls or `#[serde(default)]`. Adding a non-optional config field means adding it to `defaults.toml` (the `no_files_gives_defaults` test fails otherwise).
+- **Defaults live in `src/defaults/defaults.toml`** (moved from `src/config/` in task 04) (embedded with `include_str!`), the first merge layer. No `Default` impls or `#[serde(default)]`. Adding a non-optional config field means adding it to `defaults.toml` (the `no_files_gives_defaults` test fails otherwise).
 - **Validation:** after merging each file, the merged table is deserialized; any error is attributed to that file (`invalid <path>: …`). The test entry point is `from_sources(&[(&Path, &str)])` rather than two `Option<&str>`.
 - **`#[allow(dead_code, reason = "all fields read by task NN; remove then")]`** on each config struct (`expect` fails under `cargo test` because tests read the fields). Remove each when its fields are all read: `LimitsConfig`, `IgnoreConfig` → 02; `DifftConfig` → 03; `UiConfig` → 07; `Config` → 09; `CommentsConfig` → 10.
 - **`App` lives in `app.rs`**, not `app/state.rs` (spec §5 updated). `cli.rs` added (spec §5 updated).

@@ -2,7 +2,8 @@
 # Every non-optional field must be set here.
 
 [ui]
-theme = "Tokyo Night Moon"  # variant name, or path to a theme JSON
+# theme = "..."             # variant name, or path to a theme JSON; unset uses the
+#                           # bundled default theme (src/defaults/default_theme.rs)
 # theme_variant = "..."     # required only when `theme` is a path
 wrap = true
 tab_width = 4

@@ -9,7 +9,9 @@ use etcetera::BaseStrategy;
 use serde::Deserialize;
 use toml::{Table, Value};
 
-const DEFAULTS: &str = include_str!("config/defaults.toml");
+use crate::highlight::theme;
+
+const DEFAULTS: &str = include_str!("defaults/defaults.toml");
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -26,7 +28,7 @@ pub struct Config {
 #[serde(deny_unknown_fields)]
 #[allow(dead_code, reason = "all fields read by task 07; remove then")]
 pub struct UiConfig {
-    pub theme: String,
+    pub theme: Option<String>,
     pub theme_variant: Option<String>,
     pub wrap: bool,
     pub tab_width: usize,
@@ -87,11 +89,24 @@ fn from_sources(sources: &[(&Path, &str)]) -> Result<Config> {
     let mut config = merged.clone().try_into()?;
     for (path, text) in sources {
         let context = || format!("invalid {}", path.display());
-        merge(&mut merged, toml::from_str(text).wrap_err_with(context)?);
+        let mut table = toml::from_str(text).wrap_err_with(context)?;
+        resolve_theme_path(&mut table, path);
+        merge(&mut merged, table);
         // Everything merged before was valid, so any error comes from this file.
         config = merged.clone().try_into().wrap_err_with(context)?;
     }
     Ok(config)
+}
+
+/// Makes a relative theme path in `ui.theme` relative to the config file that sets it.
+fn resolve_theme_path(table: &mut Table, file: &Path) {
+    if let Some(Value::String(theme)) = table.get_mut("ui").and_then(|ui| ui.get_mut("theme"))
+        && theme::is_path(theme)
+        && Path::new(theme).is_relative()
+        && let Some(dir) = file.parent()
+    {
+        *theme = dir.join(&*theme).to_string_lossy().into_owned();
+    }
 }
 
 /// Deep-merges tables; any other value (arrays included) replaces.
@@ -120,7 +135,7 @@ mod tests {
     #[test]
     fn no_files_gives_defaults() {
         let c = from_sources(&[]).unwrap();
-        assert_eq!(c.ui.theme, "Tokyo Night Moon");
+        assert_eq!(c.ui.theme, None);
         assert!(c.ui.wrap);
         assert_eq!(c.ui.tab_width, 4);
         assert_eq!(c.limits.max_bytes, 1_048_576);
@@ -143,6 +158,12 @@ mod tests {
         )
         .unwrap();
         assert_eq!(c.ignore.paths, ["*.md"]);
+    }
+
+    #[test]
+    fn relative_theme_path_is_relative_to_config_file() {
+        let c = load("", "[ui]\ntheme = \"themes/x.json\"").unwrap();
+        assert_eq!(c.ui.theme.unwrap(), "/repo/.reviewy/themes/x.json");
     }
 
     #[test]
