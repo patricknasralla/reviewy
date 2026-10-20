@@ -9,7 +9,7 @@ use etcetera::BaseStrategy;
 use serde::Deserialize;
 use toml::{Table, Value};
 
-use crate::highlight::theme;
+use crate::highlight::theme::{self, Tint};
 
 const DEFAULTS: &str = include_str!("defaults/defaults.toml");
 
@@ -26,12 +26,12 @@ pub struct Config {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-#[allow(dead_code, reason = "all fields read by task 07; remove then")]
 pub struct UiConfig {
     pub theme: Option<String>,
     pub theme_variant: Option<String>,
     pub wrap: bool,
     pub tab_width: usize,
+    pub tint: Tint,
 }
 
 #[derive(Debug, Deserialize)]
@@ -84,7 +84,7 @@ pub fn load(repo_root: &Path) -> Result<Config> {
 }
 
 /// `sources` are `(path, toml)` pairs layered over the defaults, later overriding earlier; the path only labels errors.
-fn from_sources(sources: &[(&Path, &str)]) -> Result<Config> {
+pub(crate) fn from_sources(sources: &[(&Path, &str)]) -> Result<Config> {
     let mut merged: Table = toml::from_str(DEFAULTS)?;
     let mut config = merged.clone().try_into()?;
     for (path, text) in sources {

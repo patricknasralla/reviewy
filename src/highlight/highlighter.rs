@@ -136,7 +136,7 @@ mod tests {
 
     /// Highlights `src` and asserts that `text` gets the style of theme key `key`.
     fn assert_styled(lang: Language, src: &str, text: &str, key: &str) {
-        let theme = Theme::bundled_default();
+        let theme = Theme::bundled_default(crate::config::from_sources(&[]).unwrap().ui.tint);
         let lines: Vec<String> = src.lines().map(String::from).collect();
         let spans = Highlighter::new(&theme).highlight(lang, &lines);
         assert_eq!(spans.len(), lines.len());

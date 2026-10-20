@@ -57,7 +57,7 @@ Resolve the theme at startup after config. Errors abort startup with a message.
 
 `highlight.rs` re-exports `Highlighter` and `Theme`.
 
-- `highlight::theme`: `Theme { name, background, foreground, line_number, active_line_background, added, deleted, modified, conflict, line_added_bg, line_deleted_bg, token_added_bg, token_deleted_bg: Color, syntax: BTreeMap<String, Style> }` (all `Color::Rgb`, alpha already blended). `Theme::resolve(theme: &str, variant: Option<&str>) -> Result<Theme, ThemeError>`, `Theme::bundled_default() -> Theme`, `is_path(&str) -> bool`, `LINE_ALPHA = 0.15`, `TOKEN_ALPHA = 0.35`. `ThemeError::{NotFound, NoVariant, MissingKey, BadColor, Json, Io, Home}`.
+- `highlight::theme`: `Theme { name, background, foreground, line_number, active_line_background, added, deleted, modified, conflict, line_added_bg, line_deleted_bg, token_added_bg, token_deleted_bg: Color, syntax: BTreeMap<String, Style> }` (all `Color::Rgb`, alpha already blended). `Theme::resolve(theme: &str, variant: Option<&str>, tint: Tint) -> Result<Theme, ThemeError>`, `Theme::bundled_default(tint: Tint) -> Theme`, `is_path(&str) -> bool`, `Tint { line, token: f32 }` (from `config.ui.tint`; replaced the `LINE_ALPHA`/`TOKEN_ALPHA` consts in task 07). `ThemeError::{NotFound, NoVariant, MissingKey, BadColor, Json, Io, Home}`.
 - `highlight::languages::Language::{Rust, Python, CSharp, TypeScript, Tsx}`: `detect(&Path) -> Option<Language>`, `name() -> &'static str` (fence tag).
 - `highlight::highlighter`: `StyledSpan { range: Range<usize>, style: Style }`; `Highlighter::new(&Theme)`, `Highlighter::apply(&self, &mut FileDiff, &ChangedFile)`.
 - `defaults::default_theme::{FAMILY, VARIANT}`: the bundled family JSON (`include_str!`) and the default variant name.

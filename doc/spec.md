@@ -162,8 +162,10 @@ src/
     wrap.rs            soft-wrap layout (shared by diff view, editor, gj/gk)
   app.rs               App struct; declares submodules
   app/
-    state.rs           Screen, Mode, modal stack, per-file view state
+    state.rs           Mode, modal stack, pending file open
+    view.rs            FileView: per-file diff, cursor row, active/home side, scroll, row layout
     actions.rs         Action enum, vim::Command → Action mapping, App::apply
+    open.rs            open-file pipeline (content, limits, difft, align, highlight)
   ui.rs                declares submodules; top-level draw()
   ui/
     explorer.rs        explorer overlay
@@ -390,7 +392,7 @@ Capture → theme key mapping:
 - Format: Zed theme family JSON (`themes[]` with `name`, `appearance`, `style`, `style.syntax`).
 - Used keys (minimum): `editor.background`, `editor.foreground`, `editor.line_number`, `editor.active_line.background`, `syntax.*`, and diff colors from `version_control.added|deleted|modified`, falling back to `created|deleted|modified`.
 - `#RRGGBBAA` colors are alpha-blended onto `editor.background` at load time (terminals have no alpha).
-- Changed **lines** get a low-intensity tint of the added/deleted color; changed **tokens** (difft spans) get a stronger tint.
+- Changed **lines** get a low-intensity tint of the added/deleted color; changed **tokens** (difft spans) get a stronger tint. Strengths are the blend alphas `ui.tint.line` / `ui.tint.token` (§13), applied when the theme is resolved.
 - `font_style: italic` and `font_weight >= 700` map to italic/bold modifiers.
 - Color depth: 24-bit truecolor only. No 256-color fallback is planned.
 
@@ -428,6 +430,7 @@ Bundled: `src/defaults/tokyo-night.json`, compiled in via `include_str!` in `src
 - Gutter per column: line number, change marker (`+` / `-` / `~`), comment marker (e.g. `●`) on the side the comment was made on.
 - Active column is indicated (e.g. brighter gutter / border).
 - Current line in row mode: `active_line` background on the active column.
+- On first open, the cursor is on the first hunk (as `g]` from the top; a file starting with a pure deletion opens on the old column). Reopening a file restores its cursor and scroll.
 - **Wrapping** (default on, `wrap` in config): each aligned row's height is the max of both sides' wrapped heights; the shorter side is padded. With `wrap = false`, lines are clipped and the view scrolls horizontally to follow the cursor.
 - Wrapping width uses `unicode-width`; layout is computed by `vim/wrap.rs`.
 
@@ -483,7 +486,7 @@ The cursor is a whole line on the active column. Rows where the active side has 
 | arrows | Aliases for `h` `j` `k` `l` (row and cursor modes) |
 | `gg` / `G` | First/last line |
 | `Ctrl-d` / `Ctrl-u` | Half page down/up |
-| `g]` / `g[` | Next/previous hunk |
+| `g]` / `g[` | Next/previous hunk: first changed line of the hunk on the home side (last chosen with `h`/`l`); if the hunk changes only the other side (pure addition/deletion), switch to it |
 | `gn` / `gp` | Next/previous file (explorer order) |
 | Enter | Commented line → edit comment; otherwise → Cursor mode at column 0 of the line |
 | `D` | Delete comment on line (confirmation) |
@@ -678,6 +681,10 @@ theme = "Tokyo Night Moon"           # variant name, or path to a theme JSON (re
 # theme_variant = "Tokyo Night Moon" # required only when `theme` is a path
 wrap = true
 tab_width = 4
+
+[ui.tint]                            # 0-1: added/deleted color blended onto the background
+line = 0.02                          # changed lines
+token = 0.10                         # changed tokens
 
 [limits]
 max_lines = 5000

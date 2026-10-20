@@ -1991,7 +1991,7 @@
         "editor.background": "#222436",
         "editor.gutter.background": "#222436",
         "editor.subheader.background": "#222436",
-        "editor.active_line.background": "#2f334d",
+        "editor.active_line.background": "#212d48",
         "editor.highlighted_line.background": "#1e202e",
         "editor.line_number": "#3b4261",
         "editor.active_line_number": "#828bb8",

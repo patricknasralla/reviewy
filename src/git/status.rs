@@ -37,7 +37,6 @@ pub struct ChangedFile {
 
 impl ChangedFile {
     /// False for binary, conflicted, submodule and mode-only files. The UI shows a status message instead of opening them.
-    #[expect(dead_code, reason = "used by task 07")]
     pub fn viewable(&self) -> bool {
         !self.binary
             && !matches!(

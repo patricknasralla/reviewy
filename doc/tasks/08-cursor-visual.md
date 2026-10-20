@@ -10,6 +10,8 @@ Read first: `doc/spec.md` §11 (mode hierarchy, cursor mode, visual modes, examp
 
 Row mode (task 07) moves a whole-line cursor on the active column. Enter on a non-commented line enters Cursor mode at column 0. In Cursor mode the cursor is a character on the active side and cannot leave that column. `v`/`V` start a selection; Esc steps back one level (§11 diagram). Motions come from `vim/motion.rs` over a `TextView` of the active side's lines: `motion::apply(motion, count, Cursor { pos, want }, view, &MotionCtx { height, wrap })`. Keep the returned `Cursor` (its `want` is the sticky display column) per file view and pass it back on the next motion. Set `MotionCtx::wrap` to the active column's text width when `ui.wrap` is on, `None` when off; screen motions then move by segment. `gg`/`G`/`Ctrl-d`/`Ctrl-u` behave "as row mode", so they may be better handled by diff rows than by `apply` (which moves by lines).
 
+From task 07 (see its handoff notes): per-file state is `app::view::FileView` (`row`, `side`, private `home`, `scroll`, cached row `tops`). `FileView::hunk(next, count)` may **switch side** (pure addition/deletion hunks); in Cursor/Visual modes the cursor must not leave its column, so add a no-switch variant that skips hunks with no changed line on the active side. Scroll is row-granular: a wrapped row taller than the viewport is clipped at the bottom; cursor mode needs segment-level scroll inside such a row. `allow(dead_code, reason = "used by task 08")` sits on `vim::motion::apply` and `Motion::ScreenUp`; remove both. `Action`/`App::map` live in `app/actions.rs`; Enter/`D` in row mode currently set the status "Comments: task 08/09".
+
 ## Deliverables
 
 - `Mode::{Cursor, Visual, VisualLine}` with the anchor position stored for visual modes.

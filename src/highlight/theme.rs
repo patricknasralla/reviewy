@@ -11,10 +11,15 @@ use serde_json::Value;
 
 use crate::defaults::default_theme;
 
-/// Changed-line tint strength.
-pub const LINE_ALPHA: f32 = 0.15;
-/// Changed-token tint strength.
-pub const TOKEN_ALPHA: f32 = 0.35;
+/// Alpha of the added/deleted color blended onto the background for diff tints (`ui.tint`).
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Tint {
+    /// Changed lines.
+    pub line: f32,
+    /// Changed tokens.
+    pub token: f32,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum ThemeError {
@@ -62,19 +67,19 @@ pub struct Theme {
 
 impl Theme {
     /// `theme` is a variant name, or a path to a theme file (see [`is_path`]) whose variant is `variant`.
-    pub fn resolve(theme: &str, variant: Option<&str>) -> Result<Theme, ThemeError> {
+    pub fn resolve(theme: &str, variant: Option<&str>, tint: Tint) -> Result<Theme, ThemeError> {
         if is_path(theme) {
             let path = Path::new(theme);
             let variant = variant.ok_or_else(|| ThemeError::NoVariant(path.into()))?;
-            return find(&[read_family(path)?], variant);
+            return find(&[read_family(path)?], variant, tint);
         }
         let mut families = user_families()?;
         families.push(bundled_family());
-        find(&families, theme)
+        find(&families, theme, tint)
     }
 
-    pub fn bundled_default() -> Theme {
-        find(&[bundled_family()], default_theme::VARIANT).expect("default theme is bundled")
+    pub fn bundled_default(tint: Tint) -> Theme {
+        find(&[bundled_family()], default_theme::VARIANT, tint).expect("default theme is bundled")
     }
 }
 
@@ -146,17 +151,17 @@ fn user_families() -> Result<Vec<Family>, ThemeError> {
     paths.iter().map(|p| read_family(p)).collect()
 }
 
-fn find(families: &[Family], name: &str) -> Result<Theme, ThemeError> {
+fn find(families: &[Family], name: &str, tint: Tint) -> Result<Theme, ThemeError> {
     families
         .iter()
         .flat_map(|f| &f.themes)
         .find(|v| v.name == name)
         .ok_or_else(|| ThemeError::NotFound(name.into()))?
-        .to_theme()
+        .to_theme(tint)
 }
 
 impl Variant {
-    fn to_theme(&self) -> Result<Theme, ThemeError> {
+    fn to_theme(&self, tint: Tint) -> Result<Theme, ThemeError> {
         let bad = |key: &str, value: &str| ThemeError::BadColor {
             theme: self.name.clone(),
             key: key.into(),
@@ -204,10 +209,10 @@ impl Variant {
             deleted: rgb(deleted),
             modified: rgb(color(&["version_control.modified", "modified"])?),
             conflict: rgb(color(&["version_control.conflict", "conflict"])?),
-            line_added_bg: rgb(blend(added, bg, LINE_ALPHA)),
-            line_deleted_bg: rgb(blend(deleted, bg, LINE_ALPHA)),
-            token_added_bg: rgb(blend(added, bg, TOKEN_ALPHA)),
-            token_deleted_bg: rgb(blend(deleted, bg, TOKEN_ALPHA)),
+            line_added_bg: rgb(blend(added, bg, tint.line)),
+            line_deleted_bg: rgb(blend(deleted, bg, tint.line)),
+            token_added_bg: rgb(blend(added, bg, tint.token)),
+            token_deleted_bg: rgb(blend(deleted, bg, tint.token)),
             syntax,
         })
     }
@@ -248,6 +253,11 @@ fn rgb([r, g, b]: [u8; 3]) -> Color {
 mod tests {
     use super::*;
 
+    const TINT: Tint = Tint {
+        line: 0.1,
+        token: 0.2,
+    };
+
     #[test]
     fn bundled_family_parses() {
         assert_eq!(bundled_family().themes.len(), 4);
@@ -255,7 +265,7 @@ mod tests {
 
     #[test]
     fn moon_diff_colors_fall_back_to_created() {
-        let moon = Theme::bundled_default();
+        let moon = Theme::bundled_default(TINT);
         assert_eq!(moon.background, Color::Rgb(0x22, 0x24, 0x36));
         assert_eq!(moon.added, Color::Rgb(0xc3, 0xe8, 0x8d));
     }
@@ -279,7 +289,7 @@ mod tests {
                 }}}]}"##,
         )
         .unwrap();
-        let theme = find(&[family], "T").unwrap();
+        let theme = find(&[family], "T", TINT).unwrap();
         assert_eq!(
             theme.syntax["comment"],
             Style::new()

@@ -1,0 +1,28 @@
+---
+source: src/ui.rs
+expression: render(&app)
+---
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"          ┌ Large file ──────────────────────────────────────────────┐          "
+"          │ Large file (6000 lines, 1954 KB, longest line 1200).     │          "
+"          │ View anyway?                                             │          "
+"          │                                                          │          "
+"          │ Enter: view / Esc: cancel                                │          "
+"          └──────────────────────────────────────────────────────────┘          "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+" EXPLORER                                                                       "

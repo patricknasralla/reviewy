@@ -4,13 +4,10 @@ mod cli;
 mod comments;
 mod config;
 mod defaults;
-#[allow(dead_code, reason = "used by task 07; remove then")]
 mod diff;
 mod git;
-#[allow(dead_code, reason = "used by task 07; remove then")]
 mod highlight;
 mod ui;
-#[allow(dead_code, reason = "used by task 07; remove then")]
 mod vim;
 
 use std::fs::{self, OpenOptions};
@@ -23,9 +20,7 @@ use std::time::Duration;
 use clap::Parser;
 use color_eyre::Result;
 use color_eyre::eyre::bail;
-use crossterm::event::{
-    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEventKind, KeyModifiers,
-};
+use crossterm::event::{self, DisableBracketedPaste, EnableBracketedPaste, Event};
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
@@ -38,7 +33,7 @@ use tracing_subscriber::EnvFilter;
 use app::App;
 use cli::Cli;
 use git::DiffTarget;
-use highlight::{Highlighter, Theme};
+use highlight::Theme;
 
 type Tui = Terminal<CrosstermBackend<Stdout>>;
 
@@ -71,12 +66,12 @@ fn main() -> Result<()> {
         .ui
         .theme
         .as_deref()
-        .map(|t| Theme::resolve(t, variant))
+        .map(|t| Theme::resolve(t, variant, config.ui.tint))
     {
-        None => (Theme::bundled_default(), None),
+        None => (Theme::bundled_default(config.ui.tint), None),
         Some(Ok(theme)) => (theme, None),
         Some(Err(e)) => {
-            let theme = Theme::bundled_default();
+            let theme = Theme::bundled_default(config.ui.tint);
             tracing::warn!(%e, "using {}", theme.name);
             let status = format!("{e}; using {}", theme.name);
             (theme, Some(status))
@@ -93,23 +88,16 @@ fn main() -> Result<()> {
     tracing::debug!(?files, "changed files");
     ensure_reviewy_dir(&root)?;
 
-    let app = App {
-        dirty: true,
-        should_quit: false,
-        base_commit,
-        files,
-        highlighter: Highlighter::new(&theme),
-        theme,
-        status,
-    };
+    let mut app = App::new(config, root, base_commit, files, theme, status);
     let mut terminal = enter_terminal()?;
+    let size = terminal.size()?;
+    app.resize(size.width, size.height);
     let result = run(&mut terminal, &terminate, app);
     restore_terminal()?;
     result
 }
 
 fn run(terminal: &mut Tui, terminate: &AtomicBool, mut app: App) -> Result<()> {
-    app.dirty = true;
     loop {
         if terminate.load(Ordering::Relaxed) {
             // task 10: save comments
@@ -117,18 +105,18 @@ fn run(terminal: &mut Tui, terminate: &AtomicBool, mut app: App) -> Result<()> {
         }
         if event::poll(Duration::from_millis(250))? {
             match event::read()? {
-                Event::Key(key)
-                    if key.kind == KeyEventKind::Press
-                        && key.code == KeyCode::Char('q')
-                        && key.modifiers.contains(KeyModifiers::CONTROL) =>
-                {
-                    app.should_quit = true;
-                }
-                Event::Resize(..) => app.dirty = true,
+                Event::Key(key) => app.handle_key(key),
+                Event::Resize(width, height) => app.resize(width, height),
                 _ => {}
             }
         }
         if app.dirty {
+            terminal.draw(|frame| ui::draw(frame, &app))?;
+            app.dirty = false;
+        }
+        // "Diffing…" is on screen now; difft blocks for up to ~1 s on big files.
+        if app.pending.is_some() {
+            app.finish_open();
             terminal.draw(|frame| ui::draw(frame, &app))?;
             app.dirty = false;
         }

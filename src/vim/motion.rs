@@ -9,6 +9,7 @@ pub enum Motion {
     Down,
     Up,
     ScreenDown,
+    #[allow(dead_code, reason = "used by task 08; remove then")]
     ScreenUp,
     WordForward,
     WordBackward,
@@ -49,6 +50,7 @@ pub struct MotionCtx {
 }
 
 /// Applies `motion` with vim semantics. `count` is `None` when no count was typed.
+#[allow(dead_code, reason = "used by task 08; remove then")]
 pub fn apply(
     motion: Motion,
     count: Option<usize>,

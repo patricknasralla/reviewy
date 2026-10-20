@@ -1,0 +1,28 @@
+---
+source: src/ui.rs
+expression: render(&app)
+---
+"                                         1+  fn main() {                        "
+"                                         2+      let x = 2;                     "
+"                                         3+      let long = "this line is long e"
+"                                             nough to wrap in a column";        "
+"                                         4+      println!("{x}");               "
+"                                         5+  }                                  "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+" ROW  src/main.rs  1:1                                                          "

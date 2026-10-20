@@ -1,0 +1,28 @@
+---
+source: src/ui.rs
+expression: render(&app)
+---
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                ┌ Changed files ───────────────────────────────┐                "
+"                │ M src/main.rs                                │                "
+"                │ ? notes.txt                                  │                "
+"                │ R src/old.rs → src/new.rs                    │                "
+"                │ M logo.png B                                 │                "
+"                └──────────────────────────────────────────────┘                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+" EXPLORER                                                                       "

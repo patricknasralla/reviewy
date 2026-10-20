@@ -69,4 +69,35 @@ One unit test for row-mode `j` skipping padding rows on the active side.
 
 ## Handoff notes
 
-_To be filled in by the implementing agent._
+### Public interfaces
+
+- `app::App` (`app.rs`): `config, theme, highlighter, root, files, views: HashMap<PathBuf, FileView>, current: Option<usize>, explorer: usize, mode: Mode, modals: Vec<Modal>, status: Option<String>, pending: Option<PendingOpen>, comments: CommentSet, size: (u16, u16), dirty, should_quit, keys: KeyParser` (+ private `engine: Box<dyn DiffEngine>`).
+  - `App::new(config, root, base_commit: String, files, theme, status) -> App`; `handle_key(KeyEvent)` (clears `status`, `KeyParser` → `map` → `apply`); `resize(w, h)`; `current_file()`, `view() -> Option<&FileView>`.
+- `app/state.rs`: `Mode::{Explorer, Row}`, `Modal::{LargeFile { pending, info: FileInfo }, Quit}`, `PendingOpen { index, content: FileContent }`.
+- `app/view.rs`: `FileView { pub diff, pub side: Side, pub row, pub scroll, home, layout }` (`Side` = `comments::model::Side`). `new(FileDiff)`, `line(row, side)`, `cursor_line()`, `tops()` (screen line per row + end), `motion(Motion, Option<usize>, height)`, `switch(Side)`, `hunk(next, count) -> bool`, `refresh_layout(width, height, wrap)`.
+- `app/actions.rs`: `Action::{ModalConfirm, ModalCancel, ExplorerMove(Motion, Option<usize>), ExplorerOpen, ExplorerClose, RowMove(Motion, Option<usize>), Switch(Side), Hunk { next, count }, File { next }, ToExplorer, Comment, DeleteComment, Quit}`; `App::map(Input) -> Option<Action>`, `App::apply(Action)`.
+- `app/open.rs`: `App::open(index)`, `start_diff(PendingOpen)`, `finish_open()`, `insert_view(index, FileDiff)` (also the test entry point).
+- `ui`: `draw(frame, &App)`; `diff_view::{columns(&FileDiff, width) -> [Column; 2], Column { gutter, text }, draw}`; `explorer::draw`; `modals::draw` (private `confirm(title, message, hint)`); `status::draw`.
+- `highlight::theme::Tint { line, token: f32 }` (`Deserialize`); `Theme::resolve(theme, variant, tint)`, `Theme::bundled_default(tint)`.
+- `config::UiConfig::tint: Tint` (`[ui.tint]`); `config::from_sources` is `pub(crate)`.
+
+### Decisions and deviations
+
+- **Two-phase open** (developer decision): `apply` reads content, checks limits, sets "Diffing…" and `App::pending`; the event loop draws, calls `finish_open` (difft → `align::build` → `Highlighter::apply` → cache), draws again. Errors become a status message; nothing is cached, so reopening retries.
+- **Layout lives in `App`** (developer decision): terminal size in `App::size`, seeded from `terminal.size()`; each `FileView` caches row start lines keyed by (width, wrap) and recomputes on change. `ui::draw` stays `&App` and draws visible rows only.
+- **No `Screen` type**: `Mode::Explorer` plus the modal stack cover it. **`FileView` in `app/view.rs`**, open pipeline in `app/open.rs` (spec §5 updated).
+- **Initial cursor = first hunk** (developer decision; spec §10 updated).
+- **Hunk navigation** (developer decision; spec §11 updated): each hunk's target is its first *changed* (kind ≠ `Unchanged`) row on the **home side** (set by `h`/`l` and the file's starting side), else on the other side — `g]`/`g[` then switch the active side. Targets strictly increase, so jumps never stall. `j`/`k` after an automatic switch stay on that side.
+- **Diff tints configurable** (developer decision; task 04 module change, spec §9/§13 updated): `LINE_ALPHA`/`TOKEN_ALPHA` consts replaced by `[ui.tint] line = 0.02, token = 0.10` in `defaults.toml`. Bundled Tokyo Night Moon `editor.active_line.background` changed to `#212d48` by the developer.
+- **`App::base_commit` removed** (unread): the SHA is `comments.base.commit` (task 10 updated).
+- Explorer `[n]` already uses `CommentSet::count_for` (developer decision). Each entry: git-style status letter (`M A ? D R U`) and path in the status color, marker `B/C/S/P` (binary first), count.
+- `h`/`l` to an absent side (added/deleted file) is a silent no-op; ties for "nearest row" go up. `gg`/`G` with a count go to that line on the active side (`5G`). Half page = `max(height/2, 1)` lines. Explorer Esc returns to Row only if a file is open.
+- `Ctrl-q` pushes the quit modal from any state, including over another modal (not twice).
+- Gutter: ` {number}{marker}{comment slot} ` (`GUTTER_EXTRA = 4` + digits of the side's line count). Cursor row: `active_line_background` replaces the line tint on the active column; token tints stay. Unviewable messages follow §10; the unviewable reason is in `app/open.rs` (`ChangedFile::viewable` still used by `gn`/`gp`).
+- **Dead code:** `allow(dead_code, reason = "used by task 08; remove then")` on `vim::motion::apply` and `Motion::ScreenUp` (task 08 updated). `mod comments;` allow stays for task 09.
+
+### Left undone / flagged
+
+- **Tall rows:** scroll is row-granular; a wrapped row taller than the viewport is clipped at the bottom (task 08 updated).
+- After the terminal grows, the view may leave empty lines below the last row until the next move.
+- Manual check (scratch repo, GNU screen): explorer, open, all row keys, large-file modal, unviewable messages, quit modal verified. Resize and colors not verifiable there (snapshots are text-only); colors checked by the developer.

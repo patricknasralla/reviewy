@@ -8,7 +8,7 @@ Read first: `doc/spec.md` §10 (comment editor, modals), §11 (row mode Enter/`D
 
 ## Context
 
-Task 08 builds a `comments::model::Anchor` when Enter is pressed in Cursor/Visual/VisualLine mode. `comments::model` (task 06) provides `CommentSet`, `draft`, `prefill_body`, `overlaps`, `at`. `App` already has an empty `comments: CommentSet` field. Comments live in memory only in this task; saving is task 10.
+Task 08 builds a `comments::model::Anchor` when Enter is pressed in Cursor/Visual/VisualLine mode. `comments::model` (task 06) provides `CommentSet`, `draft`, `prefill_body`, `overlaps`, `at`. `App` already has an empty `comments: CommentSet` field (base `HEAD` + startup SHA); the explorer already shows `[n]` via `count_for`, and `ui::diff_view` has a blank one-char comment-marker slot in each gutter (`GUTTER_EXTRA`). Comments live in memory only in this task; saving is task 10.
 
 ## Deliverables
 

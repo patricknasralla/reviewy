@@ -1,6 +1,5 @@
 //! Git CLI integration.
 
-#[expect(dead_code, reason = "used by task 07")]
 pub mod content;
 pub mod status;
 
@@ -8,7 +7,6 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-#[expect(unused_imports, reason = "used by task 07")]
 pub use content::{FileContent, FileInfo, check_limits, read_content};
 pub use status::{ChangedFile, FileStatus, build_ignore, changed_files};
 

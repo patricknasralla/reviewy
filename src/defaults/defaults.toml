@@ -8,6 +8,11 @@
 wrap = true
 tab_width = 4
 
+[ui.tint]
+# Strength (0-1) of the added/deleted color blended onto the background.
+line = 0.02   # changed lines
+token = 0.10  # changed tokens
+
 [limits]
 max_lines = 5000
 max_bytes = 1048576

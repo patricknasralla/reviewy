@@ -8,7 +8,7 @@ Read first: `doc/spec.md` §3 (steps 7–8), §4 (startup, shutdown), §10 (moda
 
 ## Context
 
-`comments::store` (task 06) provides `load` and `save` (atomic write, deletes both files when the set is empty). `main.rs` has `// task 10:` markers at the quit and signal exit points. The app keeps comments in `App::comments`.
+`comments::store` (task 06) provides `load` and `save` (atomic write, deletes both files when the set is empty). `main.rs` has `// task 10:` markers at the quit and signal exit points; the confirmed-quit point is `// task 10: save` in `App::apply` (`Action::ModalConfirm` on `Modal::Quit`, `app/actions.rs`). `App` has no `base_commit` field (task 07): the current base SHA is `app.comments.base.commit` — read it before replacing `comments` with a loaded set. Add the "Load existing" variant to `app::state::Modal` and its text to `ui/modals.rs` (`confirm`). The app keeps comments in `App::comments`.
 
 ## Deliverables
 
