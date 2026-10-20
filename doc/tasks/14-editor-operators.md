@@ -10,6 +10,13 @@ Read first: `doc/spec.md` §5, §10 (Comment editor), §11. Handoff notes in `do
 
 Third of four tasks (12-15). Task 13 gave the editor Normal/Insert modes, the `EditorNormal` key context, `editor/buffer.rs` and `x`/`X`.
 
+Things task 13 left that this task must change (see its handoff notes):
+- `App::editor_key` (`app/comment.rs`) always parses with `Context::EditorNormal` and opens Close comment on an unpending Esc. Pick `EditorVisual` in visual modes, and only open Close comment from Normal (Esc in visual goes to Normal).
+- `x`/`X` are `Command::DeleteChar` in the `EDITOR` table, handled in `Editor::input`; they must write the register. `Editor::input` will need the registers (e.g. `input(Input, &mut Registers)`).
+- Code that matches `editor::Mode::Normal` must also cover the visual modes: the block cursor in `ui/editor.rs::draw`, `App::next_blink`, and the status line (`VISUAL` / `V-LINE`).
+- `Modal` table maps `d` to `Command::Delete`; the editor's `d` operator is separate (in `EditorNormal`).
+- `Buffer::delete(Range<Pos>)` returns the removed text (register content); `Buffer::insert` returns the end position.
+
 ## Deliverables
 
 ### Key parser

@@ -6,12 +6,20 @@ use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Clear, Padding, Paragraph, Wrap};
 
-use super::centered;
+use super::{centered, editor};
 use crate::app::state::Modal;
 use crate::highlight::Theme;
 
-/// `top`: the modal receives input (the editor then shows the terminal cursor).
-pub fn draw(frame: &mut Frame, area: Rect, theme: &Theme, modal: &Modal, top: bool) {
+/// `top`: the modal receives input (the editor then shows its cursor); `cursor_on`: the
+/// block cursor's blink phase.
+pub fn draw(
+    frame: &mut Frame,
+    area: Rect,
+    theme: &Theme,
+    modal: &Modal,
+    top: bool,
+    cursor_on: bool,
+) {
     match modal {
         Modal::LargeFile { info, .. } => confirm(
             frame,
@@ -59,7 +67,7 @@ pub fn draw(frame: &mut Frame, area: Rect, theme: &Theme, modal: &Modal, top: bo
             e,
             "Enter/Esc: discard (file replaced on exit)",
         ),
-        Modal::Editor(editor) => editor.draw(frame, area, theme, top),
+        Modal::Editor(e) => editor::draw(frame, area, e, theme, top, cursor_on),
         Modal::DeleteComment(id) => confirm(
             frame,
             area,
@@ -75,6 +83,14 @@ pub fn draw(frame: &mut Frame, area: Rect, theme: &Theme, modal: &Modal, top: bo
             "Close comment",
             "Close comment?",
             "Enter: close / Esc: edit",
+        ),
+        Modal::SaveComment(id) => confirm(
+            frame,
+            area,
+            theme,
+            "Save comment",
+            &format!("Save comment #{id}?"),
+            "Enter: save / d: delete / Esc: edit",
         ),
     }
 }

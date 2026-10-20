@@ -7,11 +7,15 @@ use ratatui::text::{Line, Span};
 
 use crate::app::App;
 use crate::app::state::Mode;
+use crate::editor;
 
 pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let mode = match app.mode {
-        _ if app.editing() => "INSERT",
+        _ if let Some(e) = app.editor() => match e.mode() {
+            editor::Mode::Normal => "NORMAL",
+            editor::Mode::Insert => "INSERT",
+        },
         Mode::Explorer => "EXPLORER",
         Mode::Normal => "NORMAL",
         Mode::Visual { .. } => "VISUAL",

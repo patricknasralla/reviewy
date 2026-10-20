@@ -4,6 +4,7 @@ mod comments;
 mod config;
 mod defaults;
 mod diff;
+mod editor;
 mod git;
 mod highlight;
 mod ui;

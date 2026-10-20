@@ -1,8 +1,8 @@
 //! Mode, modal stack and pending file open.
 
 use crate::comments::model::CommentSet;
+use crate::editor::Editor;
 use crate::git::{FileContent, FileInfo};
-use crate::ui::editor::Editor;
 use crate::vim::motion::Pos;
 
 /// Visual modes store where the selection started.
@@ -26,6 +26,8 @@ pub enum Modal {
     Editor(Editor),
     DeleteComment(u32),
     CloseComment,
+    /// `Ctrl-q` in the editor: save, delete or keep editing comment `id`.
+    SaveComment(u32),
 }
 
 /// A file whose content is read and that waits for difft.

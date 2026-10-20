@@ -32,7 +32,7 @@ Run `reviewy` anywhere inside a git repository with uncommitted changes. It comp
 
 ## Keys
 
-`Esc` steps back one level (visual, normal, explorer). `Ctrl-q` opens the quit dialog from anywhere. Counts work as in vim (`5j`, `3]`, `5G`).
+`Esc` steps back one level (visual, normal, explorer). `Ctrl-q` opens the quit dialog from anywhere except the comment editor. Counts work as in vim (`5j`, `3]`, `5G`).
 
 ### Explorer
 
@@ -48,6 +48,7 @@ Run `reviewy` anywhere inside a git repository with uncommitted changes. It comp
 | Key | Action |
 |---|---|
 | `h` `j` `k` `l`, arrows | Move (`j`/`k` by screen row when wrapping) |
+| `gj` / `gk` | Down/up by line |
 | `w` / `b` / `e` | Word motions |
 | `0` / `$` | Line start/end |
 | `gg` / `G` | First/last line |
@@ -66,7 +67,12 @@ Motions extend the selection. Enter creates a comment with the selection prefill
 
 ### Comment editor
 
-Insert-only: type, Enter, Backspace, Delete, arrows, Home/End, PageUp/PageDown, paste. Changes are kept as you type. Esc asks to close the editor; a comment left empty is removed.
+Vim-style Normal and Insert modes. A new comment opens in Insert, an existing one in Normal. Changes are kept as you type; a comment left empty is removed when the editor closes.
+
+- **Normal:** the diff view's motions (`h j k l w b e 0 $ gg G gj gk`, `Ctrl-d`/`Ctrl-u`), `i a I A o O` to insert, `x`/`X` to delete chars. Esc asks to close the editor.
+- **Insert:** type, Enter, Backspace, Delete, arrows, Home/End, PageUp/PageDown. Esc returns to Normal.
+- Paste inserts at the cursor in either mode.
+- `Ctrl-q` asks to save (Enter) or delete (`d`) the comment; an empty comment is just closed.
 
 ### Dialogs
 

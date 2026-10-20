@@ -10,6 +10,8 @@ Read first: `doc/spec.md` §10 (Comment editor), §11, §13. Handoff notes in `d
 
 Last of four tasks (12-15). The editor has Normal/Insert/Visual modes, operators and put (tasks 13, 14).
 
+From task 13: `Buffer` (`editor/buffer.rs`) keeps `lines` private; snapshots need it to be `Clone` (or a `lines` setter). Insert sessions start in `Editor::input` (`Command::Insert`, and from task 14 `c`) and end at Esc in `Editor::insert_key`. Ctrl-r is not yet in any key table.
+
 ## Deliverables
 
 ### `editor/undo.rs`

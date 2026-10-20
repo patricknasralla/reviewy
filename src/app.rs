@@ -18,10 +18,11 @@ use crate::comments::model::{Base, CommentSet};
 use crate::config::Config;
 use crate::diff::DiffEngine;
 use crate::diff::difft::DifftEngine;
+use crate::editor::{self, Editor};
 use crate::git::{ChangedFile, DiffTarget};
 use crate::highlight::{Highlighter, Theme};
-use crate::ui::editor;
-use crate::vim::keys::KeyParser;
+use crate::ui;
+use crate::vim::keys::{Context, KeyParser};
 use state::{Modal, Mode, PendingOpen};
 use view::FileView;
 
@@ -100,9 +101,16 @@ impl App {
     pub fn handle_key(&mut self, key: KeyEvent) {
         self.reset_blink();
         self.status = None;
-        if matches!(self.modals.last(), Some(Modal::Editor(_))) {
-            self.editor_key(key);
-        } else if let Some(action) = self.keys.handle(key).and_then(|input| self.map(input)) {
+        let ctx = match self.modals.last() {
+            Some(Modal::Editor(_)) => {
+                self.editor_key(key);
+                self.dirty = true;
+                return;
+            }
+            Some(_) => Context::Modal,
+            None => Context::Diff,
+        };
+        if let Some(action) = self.keys.handle(key, ctx).and_then(|input| self.map(input)) {
             self.apply(action);
         }
         self.dirty = true;
@@ -129,7 +137,12 @@ impl App {
 
     /// When the block cursor next toggles; `None` while no block cursor is shown.
     pub fn next_blink(&self) -> Option<Instant> {
-        (self.config.ui.cursor_blink && self.diff_focused()).then_some(self.blink_at)
+        let editor_normal = matches!(
+            self.modals.last(),
+            Some(Modal::Editor(e)) if e.mode() == editor::Mode::Normal
+        );
+        let shown = self.diff_focused() || editor_normal;
+        (self.config.ui.cursor_blink && shown).then_some(self.blink_at)
     }
 
     pub fn blink(&mut self, now: Instant) {
@@ -150,9 +163,12 @@ impl App {
         Duration::from_millis(self.config.ui.cursor_blink_ms)
     }
 
-    /// True while the comment editor is open, even under another modal.
-    pub fn editing(&self) -> bool {
-        self.modals.iter().any(|m| matches!(m, Modal::Editor(_)))
+    /// The comment editor, even under another modal.
+    pub fn editor(&self) -> Option<&Editor> {
+        self.modals.iter().find_map(|m| match m {
+            Modal::Editor(e) => Some(e),
+            _ => None,
+        })
     }
 
     fn view_mut(&mut self) -> Option<&mut FileView> {
@@ -176,7 +192,7 @@ impl App {
         if let Some(view) = self.view_mut() {
             view.refresh_layout(width, height, wrap);
         }
-        let area = editor::inner(self.view_area());
+        let area = ui::editor::inner(self.view_area());
         for modal in &mut self.modals {
             if let Modal::Editor(editor) = modal {
                 editor.resize(area.width, area.height);

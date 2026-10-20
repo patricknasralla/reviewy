@@ -40,7 +40,8 @@ pub fn draw(frame: &mut Frame, app: &App) {
         explorer::draw(frame, view, app);
     }
     for (i, modal) in app.modals.iter().enumerate() {
-        modals::draw(frame, view, &app.theme, modal, i + 1 == app.modals.len());
+        let top = i + 1 == app.modals.len();
+        modals::draw(frame, view, &app.theme, modal, top, app.cursor_on);
     }
     status::draw(frame, status, app);
 }

@@ -5,13 +5,14 @@ use std::path::Path;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use super::App;
-use super::actions::Action;
 use super::state::{Modal, Mode};
 use super::view::FileView;
 use crate::comments::model::{self, Anchor, Selection, Side};
+use crate::editor::{self, Editor};
 use crate::git::ChangedFile;
 use crate::highlight::languages::Language;
-use crate::ui::editor::{self, Editor};
+use crate::ui;
+use crate::vim::keys::{Command, Context};
 use crate::vim::motion::Pos;
 
 impl App {
@@ -20,7 +21,7 @@ impl App {
         if self.mode == Mode::Normal
             && let Some(id) = self.comment_at_cursor()
         {
-            self.open_editor(id);
+            self.open_editor(id, editor::Mode::Normal);
             return;
         }
         let Some((file, view)) = self.current_file().zip(self.view()) else {
@@ -43,7 +44,7 @@ impl App {
             comment.body = model::prefill_body(&comment.selected_text(), language);
         }
         self.mode = Mode::Normal;
-        self.open_editor(id);
+        self.open_editor(id, editor::Mode::Insert);
     }
 
     pub(super) fn delete_comment(&mut self) {
@@ -53,23 +54,42 @@ impl App {
         }
     }
 
-    /// Keys while the editor is the top modal; they bypass the vim key parser.
+    /// Keys while the editor is the top modal: raw in Insert mode, through the key parser in
+    /// Normal mode. Esc in Normal mode with nothing pending asks to close the editor.
     pub(super) fn editor_key(&mut self, key: KeyEvent) {
+        let Some(Modal::Editor(editor)) = self.modals.last_mut() else {
+            return;
+        };
         if key.kind == KeyEventKind::Release {
             return;
         }
-        match key.code {
-            KeyCode::Char('q') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.apply(Action::Quit);
+        // Ctrl-q asks to save or delete; an empty comment is just closed (and so removed).
+        if key.code == KeyCode::Char('q') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            let (id, empty) = (editor.id, editor.text().trim().is_empty());
+            self.keys = Default::default();
+            if empty {
+                self.close_editor();
+            } else {
+                self.modals.push(Modal::SaveComment(id));
             }
-            KeyCode::Esc => self.modals.push(Modal::CloseComment),
-            _ => {
-                if let Some(Modal::Editor(editor)) = self.modals.last_mut()
-                    && editor.key(key)
-                {
-                    self.sync_body();
+            return;
+        }
+        let changed = match editor.mode() {
+            editor::Mode::Insert => editor.insert_key(key),
+            editor::Mode::Normal => {
+                let pending = !self.keys.pending().is_empty();
+                match self.keys.handle(key, Context::EditorNormal) {
+                    Some(input) if input.command == Command::Escape && !pending => {
+                        self.modals.push(Modal::CloseComment);
+                        false
+                    }
+                    Some(input) => editor.input(input),
+                    None => false,
                 }
             }
+        };
+        if changed {
+            self.sync_body();
         }
     }
 
@@ -92,7 +112,14 @@ impl App {
         }
     }
 
-    fn open_editor(&mut self, id: u32) {
+    /// Pops the editor and removes its comment.
+    pub(super) fn delete_editor_comment(&mut self) {
+        if let Some(Modal::Editor(editor)) = self.modals.pop() {
+            self.comments.remove(editor.id);
+        }
+    }
+
+    fn open_editor(&mut self, id: u32, mode: editor::Mode) {
         let comment = self.comments.get(id).unwrap();
         let anchor = &comment.anchor;
         let range = anchor.selection.line_range();
@@ -106,8 +133,8 @@ impl App {
             Side::New => "new",
         };
         let title = format!("Comment - {}:{lines} ({side})", anchor.file.display());
-        let mut editor = Editor::new(id, title, &comment.body);
-        let area = editor::inner(self.view_area());
+        let mut editor = Editor::new(id, title, &comment.body, mode);
+        let area = ui::editor::inner(self.view_area());
         editor.resize(area.width, area.height);
         self.modals.push(Modal::Editor(editor));
     }
@@ -241,8 +268,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn create_from_visual_line_then_close_empty() {
+    fn app() -> App {
         let config = config::from_sources(&[]).unwrap();
         let theme = Theme::bundled_default(config.ui.tint);
         let mut app = App::new(
@@ -255,7 +281,16 @@ mod tests {
         );
         app.resize(80, 24);
         app.insert_view(0, diff());
-        let press = |app: &mut App, code| app.handle_key(KeyEvent::from(code));
+        app
+    }
+
+    fn press(app: &mut App, code: KeyCode) {
+        app.handle_key(KeyEvent::from(code));
+    }
+
+    #[test]
+    fn create_from_visual_line_then_close_empty() {
+        let mut app = app();
         for c in ['V', 'j'] {
             press(&mut app, KeyCode::Char(c));
         }
@@ -274,7 +309,56 @@ mod tests {
         }
         assert_eq!(app.comments.comments[0].body, "");
         press(&mut app, KeyCode::Esc);
+        press(&mut app, KeyCode::Esc);
         press(&mut app, KeyCode::Enter);
+        assert!(app.modals.is_empty());
+        assert!(app.comments.comments.is_empty());
+    }
+
+    #[test]
+    fn editor_modes_close_and_save() {
+        let mut app = app();
+        let ctrl_q = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL);
+        let mode = |app: &App| app.editor().unwrap().mode();
+        let top_is = |app: &App, f: fn(&Modal) -> bool| app.modals.last().is_some_and(f);
+
+        // A new comment opens in Insert; Esc goes to Normal, then asks to close.
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(mode(&app), editor::Mode::Insert);
+        press(&mut app, KeyCode::Char('x'));
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(mode(&app), editor::Mode::Normal);
+        // Esc only clears a pending count.
+        press(&mut app, KeyCode::Char('5'));
+        press(&mut app, KeyCode::Esc);
+        assert!(top_is(&app, |m| matches!(m, Modal::Editor(_))));
+        press(&mut app, KeyCode::Esc);
+        assert!(top_is(&app, |m| matches!(m, Modal::CloseComment)));
+        press(&mut app, KeyCode::Enter);
+        assert!(app.modals.is_empty());
+
+        // An existing comment opens in Normal; Ctrl-q then Enter keeps it.
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(mode(&app), editor::Mode::Normal);
+        app.handle_key(ctrl_q);
+        assert!(top_is(&app, |m| matches!(m, Modal::SaveComment(_))));
+        // A second Ctrl-q can't quit past the open comment.
+        app.handle_key(ctrl_q);
+        assert!(top_is(&app, |m| matches!(m, Modal::SaveComment(_))));
+        press(&mut app, KeyCode::Enter);
+        assert!(app.modals.is_empty());
+        assert_eq!(app.comments.comments.len(), 1);
+
+        // Ctrl-q then `d` deletes it.
+        press(&mut app, KeyCode::Enter);
+        app.handle_key(ctrl_q);
+        press(&mut app, KeyCode::Char('d'));
+        assert!(app.modals.is_empty());
+        assert!(app.comments.comments.is_empty());
+
+        // With nothing to save, Ctrl-q closes and removes the comment without asking.
+        press(&mut app, KeyCode::Enter);
+        app.handle_key(ctrl_q);
         assert!(app.modals.is_empty());
         assert!(app.comments.comments.is_empty());
     }

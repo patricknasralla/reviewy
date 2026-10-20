@@ -68,3 +68,36 @@ Second of four tasks (12-15). The editor is currently insert-only (`ui/editor.rs
 - fmt, clippy, tests clean.
 
 ## Handoff notes
+
+### Public interfaces
+
+- `vim::keys`:
+  - `pub enum Context { Diff, EditorNormal, Modal }`; `KeyParser::handle(event, ctx) -> Option<Input>`.
+  - `pub enum At { Before, After, LineStart, LineEnd, Below, Above }`.
+  - New `Command` variants: `Insert(At)`, `DeleteChar { before: bool }`, `Delete` (`d` in a modal).
+  - Tables are slices searched in order per context: `MOTIONS` + `DIFF` / `EDITOR` / `MODAL`; `g` chords `G_MOTIONS` (`gg gj gk`) + `G_DIFF` (`gn gp`). `type Table<K> = &'static [(K, Command)]`. `Modal` skips counts and chords.
+- `editor` (new, `src/editor.rs`):
+  - `pub enum Mode { Normal, Insert }`.
+  - `Editor { pub id, pub title, .. }`: `new(id, title, body, Mode)` (cursor at the end; `resize` must follow, it lays out and clamps), `mode()`, `text()`, `resize(w, h)`, `input(Input) -> bool` (Normal-mode commands; text changed), `insert_key(KeyEvent) -> bool` (Insert keys incl. Esc), `paste(&str, tab_width)`, `rows()` (visible screen rows), `cursor_cell() -> Option<(row, col)>` (in the text area).
+  - Private `settle()`: clamps col for the mode, resets `cursor.want` to the column within the screen row, scrolls to the cursor. Called after every non-motion edit and by `resize`. Motions keep `want` from `motion::apply`.
+- `editor::buffer::Buffer` (new): `from_text`, `text`, `lines`, `len(line)` (chars), `insert(Pos, &str) -> Pos` (end), `delete(Range<Pos>) -> String` (end exclusive; joins lines when spanning), `impl TextView`. Free fn `byte(line, col)`.
+- `ui::editor`: `rect`, `inner`, `draw(frame, area, &Editor, theme, focused, cursor_on)`: Insert sets the terminal cursor, Normal draws `ui::cursor_block`. `ui::modals::draw` gained `cursor_on`.
+- `app`:
+  - `App::editor() -> Option<&Editor>` (anywhere on the stack) replaces `editing()`.
+  - `Modal::SaveComment(u32)`; `Action::ModalDelete`; `App::delete_editor_comment()` (`pub(super)`).
+  - `open_editor(id, editor::Mode)`; `editor_key` routes Ctrl-q (any mode), raw Insert keys, Normal keys through `keys.handle(key, Context::EditorNormal)`.
+  - `next_blink` also runs while the top modal is an editor in Normal mode.
+
+### Decisions (developer decisions; spec §2, §5, §10, §11 and README updated)
+
+- `j`/`k` (and Down/Up arrows) emit `ScreenDown`/`ScreenUp` from the key table; the remap in `actions.rs` is gone. `gj`/`gk` emit `Down`/`Up`. The explorer treats both pairs the same.
+- Dialogs use their own `Modal` key table; `d` there is `Command::Delete`, acted on only by Save comment.
+- Ctrl-q in the editor resets the parser, then: empty/whitespace body -> close (removes the comment) without a modal; otherwise Save comment. `Action::Quit` is ignored while the editor is anywhere on the modal stack (it previously allowed quitting from over Save comment).
+- Esc in Normal opens Close comment only when `keys.pending()` was empty before the key.
+- `editing()` removed (its only caller, the status line, uses `editor()`).
+- Insert-mode Up/Down/PageUp/PageDown keep their own screen-row code (`vertical`/`col_at`): they handle the cursor at line end and the trailing empty row of a full-width line, which `motion::apply` doesn't. They share `cursor.want` with Normal mode.
+
+### Left undone / flagged
+
+- Logged in spec §2 Later (developer decision, not fixed): word-boundary wrapping, and the sticky column under wrap (`Down`/`Up`/half-page motions read the segment-relative `want` as a whole-line column; affects `gj`/`gk` and `Ctrl-d`/`Ctrl-u` in both views).
+- Manually verified by the developer in ghostty.

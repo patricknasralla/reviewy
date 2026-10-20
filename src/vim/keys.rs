@@ -19,6 +19,34 @@ pub enum Command {
     NextFile,
     PrevFile,
     Quit,
+    /// Enter insert mode at `At`.
+    Insert(At),
+    /// `x` (`before: false`) or `X`.
+    DeleteChar {
+        before: bool,
+    },
+    /// `d` in a modal.
+    Delete,
+}
+
+/// Where an insert-mode entry puts the cursor: `i a I A o O`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum At {
+    Before,
+    After,
+    LineStart,
+    LineEnd,
+    Below,
+    Above,
+}
+
+/// Which key table applies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Context {
+    Diff,
+    EditorNormal,
+    /// A confirmation modal: no counts or chords.
+    Modal,
 }
 
 /// `count` is `None` when none was typed, so `G` and `1G` differ.
@@ -40,15 +68,18 @@ enum Key {
 
 const MAX_COUNT: usize = 99_999;
 
-/// Single keys. `Quit` and `Escape` take effect even mid-chord.
-const KEYS: &[(Key, Command)] = &[
+/// Motions shared by the diff view and the editor. `j`/`k` move by screen row.
+const MOTIONS: &[(Key, Command)] = &[
     (Key::Char('h'), Command::Motion(Motion::Left)),
-    (Key::Char('j'), Command::Motion(Motion::Down)),
-    (Key::Char('k'), Command::Motion(Motion::Up)),
+    (Key::Char('j'), Command::Motion(Motion::ScreenDown)),
+    (Key::Char('k'), Command::Motion(Motion::ScreenUp)),
     (Key::Char('l'), Command::Motion(Motion::Right)),
     (Key::Code(KeyCode::Left), Command::Motion(Motion::Left)),
-    (Key::Code(KeyCode::Down), Command::Motion(Motion::Down)),
-    (Key::Code(KeyCode::Up), Command::Motion(Motion::Up)),
+    (
+        Key::Code(KeyCode::Down),
+        Command::Motion(Motion::ScreenDown),
+    ),
+    (Key::Code(KeyCode::Up), Command::Motion(Motion::ScreenUp)),
     (Key::Code(KeyCode::Right), Command::Motion(Motion::Right)),
     (Key::Char('w'), Command::Motion(Motion::WordForward)),
     (Key::Char('b'), Command::Motion(Motion::WordBackward)),
@@ -58,6 +89,9 @@ const KEYS: &[(Key, Command)] = &[
     (Key::Char('G'), Command::Motion(Motion::FileEnd)),
     (Key::Ctrl('d'), Command::Motion(Motion::HalfPageDown)),
     (Key::Ctrl('u'), Command::Motion(Motion::HalfPageUp)),
+];
+
+const DIFF: &[(Key, Command)] = &[
     (Key::Ctrl('h'), Command::ColumnLeft),
     (Key::Ctrl('l'), Command::ColumnRight),
     (Key::CtrlCode(KeyCode::Left), Command::ColumnLeft),
@@ -72,12 +106,53 @@ const KEYS: &[(Key, Command)] = &[
     (Key::Ctrl('q'), Command::Quit),
 ];
 
-/// Second key of `g` chords.
-const G_KEYS: &[(char, Command)] = &[
-    ('g', Command::Motion(Motion::FileStart)),
-    ('n', Command::NextFile),
-    ('p', Command::PrevFile),
+const EDITOR: &[(Key, Command)] = &[
+    (Key::Char('i'), Command::Insert(At::Before)),
+    (Key::Char('a'), Command::Insert(At::After)),
+    (Key::Char('I'), Command::Insert(At::LineStart)),
+    (Key::Char('A'), Command::Insert(At::LineEnd)),
+    (Key::Char('o'), Command::Insert(At::Below)),
+    (Key::Char('O'), Command::Insert(At::Above)),
+    (Key::Char('x'), Command::DeleteChar { before: false }),
+    (Key::Char('X'), Command::DeleteChar { before: true }),
+    (Key::Code(KeyCode::Esc), Command::Escape),
+    (Key::Ctrl('q'), Command::Quit),
 ];
+
+const MODAL: &[(Key, Command)] = &[
+    (Key::Code(KeyCode::Enter), Command::Confirm),
+    (Key::Code(KeyCode::Esc), Command::Escape),
+    (Key::Char('d'), Command::Delete),
+    (Key::Ctrl('q'), Command::Quit),
+];
+
+/// Second key of `g` chords. `gj`/`gk` move by line.
+const G_MOTIONS: &[(char, Command)] = &[
+    ('g', Command::Motion(Motion::FileStart)),
+    ('j', Command::Motion(Motion::Down)),
+    ('k', Command::Motion(Motion::Up)),
+];
+
+const G_DIFF: &[(char, Command)] = &[('n', Command::NextFile), ('p', Command::PrevFile)];
+
+type Table<K> = &'static [(K, Command)];
+
+/// Single-key and `g` chord tables of a context, searched in order.
+fn tables(ctx: Context) -> (&'static [Table<Key>], &'static [Table<char>]) {
+    match ctx {
+        Context::Diff => (&[MOTIONS, DIFF], &[G_MOTIONS, G_DIFF]),
+        Context::EditorNormal => (&[MOTIONS, EDITOR], &[G_MOTIONS]),
+        Context::Modal => (&[MODAL], &[]),
+    }
+}
+
+fn find<K: PartialEq + Copy>(tables: &[&[(K, Command)]], key: K) -> Option<Command> {
+    tables
+        .iter()
+        .flat_map(|t| t.iter())
+        .find(|(k, _)| *k == key)
+        .map(|&(_, c)| c)
+}
 
 #[derive(Debug, Default)]
 pub struct KeyParser {
@@ -86,7 +161,8 @@ pub struct KeyParser {
 }
 
 impl KeyParser {
-    pub fn handle(&mut self, event: KeyEvent) -> Option<Input> {
+    /// `Quit` and `Escape` take effect even mid-chord.
+    pub fn handle(&mut self, event: KeyEvent, ctx: Context) -> Option<Input> {
         if event.kind == KeyEventKind::Release {
             return None;
         }
@@ -96,7 +172,8 @@ impl KeyParser {
             code if event.modifiers.contains(KeyModifiers::CONTROL) => Key::CtrlCode(code),
             code => Key::Code(code),
         };
-        let command = KEYS.iter().find(|(k, _)| *k == key).map(|&(_, c)| c);
+        let (keys, g_keys) = tables(ctx);
+        let command = find(keys, key);
 
         if let Some(c @ (Command::Quit | Command::Escape)) = command {
             *self = Self::default();
@@ -105,9 +182,12 @@ impl KeyParser {
                 count: None,
             });
         }
+        if ctx == Context::Modal {
+            return self.emit(command);
+        }
         if self.g {
             let second = match key {
-                Key::Char(c) => G_KEYS.iter().find(|(k, _)| *k == c).map(|&(_, c)| c),
+                Key::Char(c) => find(g_keys, c),
                 _ => None,
             };
             return self.emit(second);
@@ -149,7 +229,7 @@ mod tests {
 
     fn feed(p: &mut KeyParser, keys: &str) -> Vec<Input> {
         keys.chars()
-            .filter_map(|c| p.handle(key(KeyCode::Char(c))))
+            .filter_map(|c| p.handle(key(KeyCode::Char(c)), Context::Diff))
             .collect()
     }
 
@@ -162,7 +242,7 @@ mod tests {
         let mut p = KeyParser::default();
         assert_eq!(
             feed(&mut p, "5j"),
-            [input(Command::Motion(Motion::Down), Some(5))]
+            [input(Command::Motion(Motion::ScreenDown), Some(5))]
         );
         assert_eq!(
             feed(&mut p, "0"),
@@ -170,15 +250,15 @@ mod tests {
         );
         assert_eq!(
             feed(&mut p, "10j"),
-            [input(Command::Motion(Motion::Down), Some(10))]
+            [input(Command::Motion(Motion::ScreenDown), Some(10))]
         );
         assert_eq!(
             feed(&mut p, "G"),
             [input(Command::Motion(Motion::FileEnd), None)]
         );
         assert_eq!(
-            p.handle(key(KeyCode::Down)),
-            Some(input(Command::Motion(Motion::Down), None))
+            p.handle(key(KeyCode::Down), Context::Diff),
+            Some(input(Command::Motion(Motion::ScreenDown), None))
         );
     }
 
@@ -193,8 +273,32 @@ mod tests {
         // Unknown second key cancels the chord and the count.
         assert_eq!(
             feed(&mut p, "5gxj"),
-            [input(Command::Motion(Motion::Down), None)]
+            [input(Command::Motion(Motion::ScreenDown), None)]
         );
+    }
+
+    #[test]
+    fn tables_per_context() {
+        let mut p = KeyParser::default();
+        let mut feed_in = |keys: &str, ctx| -> Vec<Input> {
+            keys.chars()
+                .filter_map(|c| p.handle(key(KeyCode::Char(c)), ctx))
+                .collect()
+        };
+        assert_eq!(
+            feed_in("gn", Context::Diff),
+            [input(Command::NextFile, None)]
+        );
+        assert_eq!(feed_in("gn", Context::EditorNormal), []);
+        for ctx in [Context::Diff, Context::EditorNormal] {
+            assert_eq!(
+                feed_in("jgj", ctx),
+                [
+                    input(Command::Motion(Motion::ScreenDown), None),
+                    input(Command::Motion(Motion::Down), None)
+                ]
+            );
+        }
     }
 
     #[test]
@@ -202,7 +306,10 @@ mod tests {
         let mut p = KeyParser::default();
         for code in [KeyCode::Char('h'), KeyCode::Left] {
             let event = KeyEvent::new(code, KeyModifiers::CONTROL);
-            assert_eq!(p.handle(event), Some(input(Command::ColumnLeft, None)));
+            assert_eq!(
+                p.handle(event, Context::Diff),
+                Some(input(Command::ColumnLeft, None))
+            );
         }
     }
 
@@ -212,14 +319,17 @@ mod tests {
         feed(&mut p, "5g");
         assert_eq!(p.pending(), "5g");
         assert_eq!(
-            p.handle(key(KeyCode::Esc)),
+            p.handle(key(KeyCode::Esc), Context::Diff),
             Some(input(Command::Escape, None))
         );
         assert_eq!(p.pending(), "");
 
         feed(&mut p, "5g");
         let ctrl_q = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL);
-        assert_eq!(p.handle(ctrl_q), Some(input(Command::Quit, None)));
+        assert_eq!(
+            p.handle(ctrl_q, Context::Diff),
+            Some(input(Command::Quit, None))
+        );
         assert_eq!(p.pending(), "");
     }
 }

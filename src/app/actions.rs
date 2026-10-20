@@ -10,15 +10,24 @@ use crate::vim::motion::{Motion, MotionCtx};
 pub enum Action {
     ModalConfirm,
     ModalCancel,
+    /// `d` in the save-comment modal.
+    ModalDelete,
     ExplorerMove(Motion, Option<usize>),
     ExplorerOpen,
     ExplorerClose,
     Move(Motion, Option<usize>),
     Switch(Side),
-    Hunk { next: bool, count: usize },
-    File { next: bool },
+    Hunk {
+        next: bool,
+        count: usize,
+    },
+    File {
+        next: bool,
+    },
     ToExplorer,
-    Visual { line: bool },
+    Visual {
+        line: bool,
+    },
     ToNormal,
     Comment,
     DeleteComment,
@@ -32,31 +41,32 @@ impl App {
         if command == Command::Quit {
             return Some(Action::Quit);
         }
-        if !self.modals.is_empty() {
+        if let Some(top) = self.modals.last() {
             return match command {
                 Command::Confirm => Some(Action::ModalConfirm),
                 Command::Escape => Some(Action::ModalCancel),
+                Command::Delete if matches!(top, Modal::SaveComment(_)) => {
+                    Some(Action::ModalDelete)
+                }
                 _ => None,
             };
         }
         match self.mode {
             Mode::Explorer => match command {
                 Command::Motion(
-                    m @ (Motion::Down | Motion::Up | Motion::FileStart | Motion::FileEnd),
+                    m @ (Motion::Down
+                    | Motion::Up
+                    | Motion::ScreenDown
+                    | Motion::ScreenUp
+                    | Motion::FileStart
+                    | Motion::FileEnd),
                 ) => Some(Action::ExplorerMove(m, count)),
                 Command::Confirm => Some(Action::ExplorerOpen),
                 Command::Escape => Some(Action::ExplorerClose),
                 _ => None,
             },
             Mode::Normal | Mode::Visual { .. } | Mode::VisualLine { .. } => match command {
-                Command::Motion(m) => {
-                    let m = match m {
-                        Motion::Down => Motion::ScreenDown,
-                        Motion::Up => Motion::ScreenUp,
-                        m => m,
-                    };
-                    Some(Action::Move(m, count))
-                }
+                Command::Motion(m) => Some(Action::Move(m, count)),
                 Command::ColumnLeft => Some(Action::Switch(Side::Old)),
                 Command::ColumnRight => Some(Action::Switch(Side::New)),
                 Command::NextHunk | Command::PrevHunk => Some(Action::Hunk {
@@ -85,7 +95,7 @@ impl App {
                 Some(Modal::DeleteComment(id)) => {
                     self.comments.remove(id);
                 }
-                Some(Modal::CloseComment) => self.close_editor(),
+                Some(Modal::CloseComment | Modal::SaveComment(_)) => self.close_editor(),
                 // The editor takes its own keys (`App::handle_key`).
                 // Discard: `comments` is still the empty startup set.
                 Some(Modal::LoadExisting(_) | Modal::Editor(_)) | None => {}
@@ -95,11 +105,19 @@ impl App {
                     self.keep(set);
                 }
             }
+            Action::ModalDelete => {
+                self.modals.pop();
+                self.delete_editor_comment();
+            }
             Action::ExplorerMove(motion, count) => {
                 let last = self.files.len() - 1;
                 self.explorer = match (motion, count) {
-                    (Motion::Down, n) => (self.explorer + n.unwrap_or(1)).min(last),
-                    (Motion::Up, n) => self.explorer.saturating_sub(n.unwrap_or(1)),
+                    (Motion::Down | Motion::ScreenDown, n) => {
+                        (self.explorer + n.unwrap_or(1)).min(last)
+                    }
+                    (Motion::Up | Motion::ScreenUp, n) => {
+                        self.explorer.saturating_sub(n.unwrap_or(1))
+                    }
                     (_, Some(n)) => n.clamp(1, last + 1) - 1,
                     (Motion::FileStart, None) => 0,
                     _ => last,
@@ -143,8 +161,9 @@ impl App {
             Action::ToNormal => self.mode = Mode::Normal,
             Action::Comment => self.comment(),
             Action::DeleteComment => self.delete_comment(),
+            // Not over the editor: the comment is closed (saved or deleted) first.
             Action::Quit => {
-                if !matches!(self.modals.last(), Some(Modal::Quit)) {
+                if self.editor().is_none() && !matches!(self.modals.last(), Some(Modal::Quit)) {
                     self.modals.push(Modal::Quit);
                 }
             }
