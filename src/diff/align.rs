@@ -149,7 +149,7 @@ impl<'a> Side<'a> {
 
 /// Expands tabs to the next multiple of `tab_width` display columns. The map is `None` when
 /// the line has no tabs (offsets unchanged).
-fn expand_tabs(line: &str, tab_width: usize) -> (String, Option<Vec<usize>>) {
+pub fn expand_tabs(line: &str, tab_width: usize) -> (String, Option<Vec<usize>>) {
     if !line.contains('\t') {
         return (line.to_owned(), None);
     }

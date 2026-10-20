@@ -11,6 +11,7 @@ use crate::app::state::Mode;
 pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let mode = match app.mode {
+        _ if app.editing() => "INSERT",
         Mode::Explorer => "EXPLORER",
         Mode::Normal => "NORMAL",
         Mode::Visual { .. } => "VISUAL",

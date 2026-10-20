@@ -1,4 +1,4 @@
-# Task 01 — Scaffold
+# Task 01 - Scaffold
 
 ## Goal
 

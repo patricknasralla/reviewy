@@ -10,7 +10,8 @@ use super::centered;
 use crate::app::state::Modal;
 use crate::highlight::Theme;
 
-pub fn draw(frame: &mut Frame, area: Rect, theme: &Theme, modal: &Modal) {
+/// `top`: the modal receives input (the editor then shows the terminal cursor).
+pub fn draw(frame: &mut Frame, area: Rect, theme: &Theme, modal: &Modal, top: bool) {
     match modal {
         Modal::LargeFile { info, .. } => confirm(
             frame,
@@ -32,6 +33,23 @@ pub fn draw(frame: &mut Frame, area: Rect, theme: &Theme, modal: &Modal) {
             "Quit",
             "Save and quit?",
             "Enter: quit / Esc: cancel",
+        ),
+        Modal::Editor(editor) => editor.draw(frame, area, theme, top),
+        Modal::DeleteComment(id) => confirm(
+            frame,
+            area,
+            theme,
+            "Delete comment",
+            &format!("Delete comment #{id}?"),
+            "Enter: delete / Esc: cancel",
+        ),
+        Modal::CloseComment => confirm(
+            frame,
+            area,
+            theme,
+            "Close comment",
+            "Close comment?",
+            "Enter: close / Esc: edit",
         ),
     }
 }

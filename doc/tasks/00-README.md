@@ -4,7 +4,7 @@ Reviewy v1 is built one task at a time, in order. Each task is carried out by a 
 
 | # | Task | Spec sections | Depends on |
 |---|---|---|---|
-| 01 | [Scaffold](01-scaffold.md) | §4, §5, §13, §14, §15 | — |
+| 01 | [Scaffold](01-scaffold.md) | §4, §5, §13, §14, §15 | - |
 | 02 | [Git integration](02-git.md) | §6 | 01 |
 | 03 | [Diff engine and alignment](03-diff.md) | §7, §8 | 02 |
 | 04 | [Syntax highlighting and themes](04-highlight.md) | §9 | 03 |

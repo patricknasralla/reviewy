@@ -1,4 +1,4 @@
-# Task 07 — App, explorer and diff view (row mode)
+# Task 07 - App, explorer and diff view (row mode)
 
 ## Goal
 
@@ -30,7 +30,7 @@ Modules available: `config`, `git` (changed files, content, limits), `diff` (`Di
 - `j`/`k` (counts), `gg`/`G`, `Ctrl-d`/`Ctrl-u` move between rows, **skipping rows where the active side has no line**.
 - `h`/`l` switch the active column and jump to the nearest row with a line on that side.
 - `g]`/`g[` next/previous hunk start; `gn`/`gp` next/previous **viewable** file in explorer order (no wraparound: at the first/last file, show a status message).
-- Enter → in this task, a no-op status message ("Comments: task 08/09") — tasks 08/09 replace it. `D` likewise a no-op.
+- Enter → in this task, a no-op status message ("Comments: task 08/09") - tasks 08/09 replace it. `D` likewise a no-op.
 - Esc → explorer overlay. `Ctrl-q` → quit modal (Enter quits, Esc cancels). `// task 10: save` at the quit point.
 - Scrolling: keep the cursor row visible with a small margin (3 rows).
 
@@ -87,7 +87,7 @@ One unit test for row-mode `j` skipping padding rows on the active side.
 - **Layout lives in `App`** (developer decision): terminal size in `App::size`, seeded from `terminal.size()`; each `FileView` caches row start lines keyed by (width, wrap) and recomputes on change. `ui::draw` stays `&App` and draws visible rows only.
 - **No `Screen` type**: `Mode::Explorer` plus the modal stack cover it. **`FileView` in `app/view.rs`**, open pipeline in `app/open.rs` (spec §5 updated).
 - **Initial cursor = first hunk** (developer decision; spec §10 updated).
-- **Hunk navigation** (developer decision; spec §11 updated): each hunk's target is its first *changed* (kind ≠ `Unchanged`) row on the **home side** (set by `h`/`l` and the file's starting side), else on the other side — `g]`/`g[` then switch the active side. Targets strictly increase, so jumps never stall. `j`/`k` after an automatic switch stay on that side.
+- **Hunk navigation** (developer decision; spec §11 updated): each hunk's target is its first *changed* (kind ≠ `Unchanged`) row on the **home side** (set by `h`/`l` and the file's starting side), else on the other side - `g]`/`g[` then switch the active side. Targets strictly increase, so jumps never stall. `j`/`k` after an automatic switch stay on that side.
 - **Diff tints configurable** (developer decision; task 04 module change, spec §9/§13 updated): `LINE_ALPHA`/`TOKEN_ALPHA` consts replaced by `[ui.tint] line = 0.02, token = 0.10` in `defaults.toml`. Bundled Tokyo Night Moon `editor.active_line.background` changed to `#212d48` by the developer.
 - **`App::base_commit` removed** (unread): the SHA is `comments.base.commit` (task 10 updated).
 - Explorer `[n]` already uses `CommentSet::count_for` (developer decision). Each entry: git-style status letter (`M A ? D R U`) and path in the status color, marker `B/C/S/P` (binary first), count.

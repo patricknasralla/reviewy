@@ -1,6 +1,5 @@
 mod app;
 mod cli;
-#[allow(dead_code, reason = "used by task 09; remove then")]
 mod comments;
 mod config;
 mod defaults;
@@ -106,6 +105,7 @@ fn run(terminal: &mut Tui, terminate: &AtomicBool, mut app: App) -> Result<()> {
         if event::poll(Duration::from_millis(250))? {
             match event::read()? {
                 Event::Key(key) => app.handle_key(key),
+                Event::Paste(text) => app.paste(&text),
                 Event::Resize(width, height) => app.resize(width, height),
                 _ => {}
             }

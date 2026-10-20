@@ -35,7 +35,11 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
             let row = Rect::new(inner.x, y, inner.width, 1);
             buf.set_style(row, Style::new().bg(theme.active_line_background));
         }
-        let line = entry(file, app.comments.count_for(&file.path), theme);
+        let line = entry(
+            file,
+            app.comments.count_for(file.old_path(), &file.path),
+            theme,
+        );
         buf.set_line(inner.x, y, &line, inner.width);
     }
 }

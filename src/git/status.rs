@@ -44,6 +44,14 @@ impl ChangedFile {
                 FileStatus::Conflicted | FileStatus::Submodule | FileStatus::ModeOnly
             )
     }
+
+    /// The path in the base commit: `from` for renames.
+    pub fn old_path(&self) -> &Path {
+        match &self.status {
+            FileStatus::Renamed { from } => from,
+            _ => &self.path,
+        }
+    }
 }
 
 #[derive(Debug)]

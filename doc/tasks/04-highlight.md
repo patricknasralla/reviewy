@@ -1,4 +1,4 @@
-# Task 04 — Syntax highlighting and themes
+# Task 04 - Syntax highlighting and themes
 
 ## Goal
 

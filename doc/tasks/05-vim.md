@@ -1,4 +1,4 @@
-# Task 05 — Vim engine
+# Task 05 - Vim engine
 
 ## Goal
 

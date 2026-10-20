@@ -2,6 +2,7 @@
 
 pub mod model;
 pub mod render_md;
+#[allow(dead_code, reason = "used by task 10; remove then")]
 pub mod store;
 
 use std::io;

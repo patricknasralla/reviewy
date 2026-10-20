@@ -1,4 +1,4 @@
-# Task 10 — Persistence and shutdown
+# Task 10 - Persistence and shutdown
 
 ## Goal
 
@@ -8,11 +8,11 @@ Read first: `doc/spec.md` §3 (steps 7–8), §4 (startup, shutdown), §10 (moda
 
 ## Context
 
-`comments::store` (task 06) provides `load` and `save` (atomic write, deletes both files when the set is empty). `main.rs` has `// task 10:` markers at the quit and signal exit points; the confirmed-quit point is `// task 10: save` in `App::apply` (`Action::ModalConfirm` on `Modal::Quit`, `app/actions.rs`). `App` has no `base_commit` field (task 07): the current base SHA is `app.comments.base.commit` — read it before replacing `comments` with a loaded set. Add the "Load existing" variant to `app::state::Modal` and its text to `ui/modals.rs` (`confirm`). The app keeps comments in `App::comments`.
+`comments::store` (task 06) provides `load` and `save` (atomic write, deletes both files when the set is empty). `main.rs` has `// task 10:` markers at the quit and signal exit points; the confirmed-quit point is `// task 10: save` in `App::apply` (`Action::ModalConfirm` on `Modal::Quit`, `app/actions.rs`). `App` has no `base_commit` field (task 07): the current base SHA is `app.comments.base.commit` - read it before replacing `comments` with a loaded set. Add the "Load existing" variant to `app::state::Modal` and its text to `ui/modals.rs` (`confirm`). The app keeps comments in `App::comments`. Since task 09 the comment editor is `Modal::Editor` on the same stack (with `DeleteComment(id)`, `CloseComment`); `App::handle_key` sends keys to the editor when it is on top, so push "Load existing" before any editor can exist (startup), and `App::paste` only acts when the editor is on top. `#[allow(dead_code)]` sits on `pub mod store;` in `comments.rs` (remove it).
 
 ## Deliverables
 
-- **Startup** (§4 step 8): if `.reviewy/comments.json` exists, load it (`store::load(.reviewy/)` returns `Ok(None)` when it doesn't). On success, show the "Load existing" modal on top of the explorer: "Found N comments from a previous session (base <short sha>). Keep them?" — Enter keeps (replace `App::comments` with the loaded set, keeping its `next_id`; update `base` to the current base commit), Esc discards in memory only. If loading fails (bad JSON, wrong version), show the error in the modal and treat Enter/Esc as discard; never delete the file at startup.
+- **Startup** (§4 step 8): if `.reviewy/comments.json` exists, load it (`store::load(.reviewy/)` returns `Ok(None)` when it doesn't). On success, show the "Load existing" modal on top of the explorer: "Found N comments from a previous session (base <short sha>). Keep them?" - Enter keeps (replace `App::comments` with the loaded set, keeping its `next_id`; update `base` to the current base commit), Esc discards in memory only. If loading fails (bad JSON, wrong version), show the error in the modal and treat Enter/Esc as discard; never delete the file at startup.
   - The modal must be on top of the stack before any other input is handled.
   - Until the reviewer answers it, save points must **not** call `store::save`: the in-memory set is still empty, and saving it would delete the previous `comments.json`. A signal or quit while the modal is open exits without touching the files.
 - **Save points:** confirmed quit (`Ctrl-q` → Enter) and the signal flag (SIGTERM/SIGHUP/SIGINT). Both call one `App::save()` → `store::save(.reviewy/, &comments, &config.comments.preamble)`. The comment editor's current buffer is already in the model (task 09), so an open editor is saved as-is; empty-body comments are dropped before saving.

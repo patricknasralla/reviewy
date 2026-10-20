@@ -1,0 +1,280 @@
+//! Comment flows: create, edit, delete, and the editor's input.
+
+use std::path::Path;
+
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+
+use super::App;
+use super::actions::Action;
+use super::state::{Modal, Mode};
+use super::view::FileView;
+use crate::comments::model::{self, Anchor, Selection, Side};
+use crate::git::ChangedFile;
+use crate::highlight::languages::Language;
+use crate::ui::editor::{self, Editor};
+use crate::vim::motion::Pos;
+
+impl App {
+    /// Enter: edit the cursor line's comment, or create one on the cursor line or selection.
+    pub(super) fn comment(&mut self) {
+        if self.mode == Mode::Normal
+            && let Some(id) = self.comment_at_cursor()
+        {
+            self.open_editor(id);
+            return;
+        }
+        let Some((file, view)) = self.current_file().zip(self.view()) else {
+            return;
+        };
+        let Some(anchor) = anchor(self.mode, view, file) else {
+            return;
+        };
+        if let Some(id) = self.comments.overlaps(&anchor) {
+            self.status = Some(format!("Overlaps comment #{id}"));
+            return;
+        }
+        let language = Language::detect(&anchor.file).map(Language::name);
+        let lines = &view.text(anchor.side).unwrap().lines;
+        let context = self.config.comments.context_lines;
+        let draft = model::draft(anchor, language, lines, context, String::new());
+        let id = self.comments.add(draft);
+        if self.mode != Mode::Normal {
+            let comment = self.comments.get_mut(id).unwrap();
+            comment.body = model::prefill_body(&comment.selected_text(), language);
+        }
+        self.mode = Mode::Normal;
+        self.open_editor(id);
+    }
+
+    pub(super) fn delete_comment(&mut self) {
+        match self.comment_at_cursor() {
+            Some(id) => self.modals.push(Modal::DeleteComment(id)),
+            None => self.status = Some("No comment on this line".into()),
+        }
+    }
+
+    /// Keys while the editor is the top modal; they bypass the vim key parser.
+    pub(super) fn editor_key(&mut self, key: KeyEvent) {
+        if key.kind == KeyEventKind::Release {
+            return;
+        }
+        match key.code {
+            KeyCode::Char('q') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.apply(Action::Quit);
+            }
+            KeyCode::Esc => self.modals.push(Modal::CloseComment),
+            _ => {
+                if let Some(Modal::Editor(editor)) = self.modals.last_mut()
+                    && editor.key(key)
+                {
+                    self.sync_body();
+                }
+            }
+        }
+    }
+
+    /// Bracketed paste; ignored unless the editor is the top modal.
+    pub fn paste(&mut self, text: &str) {
+        if let Some(Modal::Editor(editor)) = self.modals.last_mut() {
+            editor.paste(text, self.config.ui.tab_width);
+            self.sync_body();
+            self.dirty = true;
+        }
+    }
+
+    /// Pops the editor; a comment left empty is removed.
+    pub(super) fn close_editor(&mut self) {
+        if let Some(Modal::Editor(editor)) = self.modals.pop()
+            && (self.comments.get(editor.id)).is_some_and(|c| c.body.trim().is_empty())
+        {
+            self.comments.remove(editor.id);
+        }
+    }
+
+    fn open_editor(&mut self, id: u32) {
+        let comment = self.comments.get(id).unwrap();
+        let anchor = &comment.anchor;
+        let range = anchor.selection.line_range();
+        let lines = if range.start() == range.end() {
+            range.start().to_string()
+        } else {
+            format!("{}-{}", range.start(), range.end())
+        };
+        let side = match anchor.side {
+            Side::Old => "old",
+            Side::New => "new",
+        };
+        let title = format!("Comment - {}:{lines} ({side})", anchor.file.display());
+        let mut editor = Editor::new(id, title, &comment.body);
+        let area = editor::inner(self.view_area());
+        editor.resize(area.width, area.height);
+        self.modals.push(Modal::Editor(editor));
+    }
+
+    fn sync_body(&mut self) {
+        if let Some(Modal::Editor(editor)) = self.modals.last()
+            && let Some(comment) = self.comments.get_mut(editor.id)
+        {
+            comment.body = editor.text();
+        }
+    }
+
+    /// Comment covering the cursor line on the active side.
+    fn comment_at_cursor(&self) -> Option<u32> {
+        let (file, view) = self.current_file().zip(self.view())?;
+        let line = view.cursor_line()? + 1;
+        let path = side_path(file, view.side);
+        Some(self.comments.at(path, view.side, line)?.id)
+    }
+}
+
+/// Repo-relative path of `file` on `side`: the old path of a rename on the old side.
+pub fn side_path(file: &ChangedFile, side: Side) -> &Path {
+    match side {
+        Side::Old => file.old_path(),
+        Side::New => &file.path,
+    }
+}
+
+/// What Enter comments on; `None` in the explorer or when the side has no lines.
+fn anchor(mode: Mode, view: &FileView, file: &ChangedFile) -> Option<Anchor> {
+    view.cursor_line()?;
+    let pos = |p: Pos| model::Pos {
+        line: p.line as u32 + 1,
+        col: p.col as u32 + 1,
+    };
+    let cursor = pos(view.cursor.pos);
+    let selection = match mode {
+        Mode::Normal => Selection::from_lines(cursor.line, cursor.line),
+        Mode::Visual { anchor } => Selection::from_chars(pos(anchor), cursor),
+        Mode::VisualLine { anchor } => Selection::from_lines(pos(anchor).line, cursor.line),
+        Mode::Explorer => return None,
+    };
+    Some(Anchor {
+        file: side_path(file, view.side).into(),
+        side: view.side,
+        selection,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+    use crate::config;
+    use crate::diff::model::{FileDiff, LineKind, Row, SideText};
+    use crate::git::FileStatus;
+    use crate::highlight::Theme;
+    use crate::vim::motion::{Motion, MotionCtx};
+
+    fn diff() -> FileDiff {
+        let lines = ["let value = 1;", "call(value);"];
+        let n = lines.len();
+        FileDiff {
+            lhs: None,
+            rhs: Some(SideText {
+                lines: lines.map(String::from).to_vec(),
+                kinds: vec![LineKind::Added; n],
+                changes: vec![Vec::new(); n],
+                highlights: vec![Vec::new(); n],
+            }),
+            rows: (0..n as u32)
+                .map(|l| Row {
+                    lhs: None,
+                    rhs: Some(l),
+                })
+                .collect(),
+            hunks: std::iter::once(0..n).collect(),
+        }
+    }
+
+    fn file() -> ChangedFile {
+        ChangedFile {
+            path: "a.rs".into(),
+            status: FileStatus::Modified,
+            binary: false,
+        }
+    }
+
+    #[test]
+    fn anchors_for_each_mode() {
+        let file = file();
+        let ctx = MotionCtx {
+            height: 10,
+            wrap: None,
+        };
+        let mut view = FileView::new(diff());
+        let target = |mode, view: &FileView| anchor(mode, view, &file).unwrap().selection;
+        let at = |line, col| model::Pos { line, col };
+
+        assert_eq!(target(Mode::Normal, &view), Selection::Line { line: 1 });
+
+        view.cursor_motion(Motion::WordForward, None, &ctx);
+        let start = view.cursor.pos;
+        view.cursor_motion(Motion::WordEnd, None, &ctx);
+        assert_eq!(
+            target(Mode::Visual { anchor: start }, &view),
+            Selection::Chars {
+                start: at(1, 5),
+                end: at(1, 9)
+            }
+        );
+
+        view.cursor_motion(Motion::Down, None, &ctx);
+        assert_eq!(
+            target(Mode::VisualLine { anchor: start }, &view),
+            Selection::Lines { start: 1, end: 2 }
+        );
+
+        // Backwards: the anchor is after the cursor.
+        let start = view.cursor.pos;
+        view.cursor_motion(Motion::LineStart, None, &ctx);
+        view.cursor_motion(Motion::WordBackward, None, &ctx);
+        assert_eq!(
+            target(Mode::Visual { anchor: start }, &view),
+            Selection::Chars {
+                start: at(1, 14),
+                end: at(2, 9)
+            }
+        );
+    }
+
+    #[test]
+    fn create_from_visual_line_then_close_empty() {
+        let config = config::from_sources(&[]).unwrap();
+        let theme = Theme::bundled_default(config.ui.tint);
+        let mut app = App::new(
+            config,
+            PathBuf::new(),
+            "0".repeat(40),
+            vec![file()],
+            theme,
+            None,
+        );
+        app.resize(80, 24);
+        app.insert_view(0, diff());
+        let press = |app: &mut App, code| app.handle_key(KeyEvent::from(code));
+        for c in ['V', 'j'] {
+            press(&mut app, KeyCode::Char(c));
+        }
+        press(&mut app, KeyCode::Enter);
+
+        let comment = &app.comments.comments[0];
+        assert_eq!(
+            comment.anchor.selection,
+            Selection::Lines { start: 1, end: 2 }
+        );
+        assert_eq!(comment.body, "```rust\nlet value = 1;\ncall(value);\n```\n");
+        assert!(matches!(app.modals.last(), Some(Modal::Editor(_))));
+
+        for _ in 0..comment.body.chars().count() {
+            press(&mut app, KeyCode::Backspace);
+        }
+        assert_eq!(app.comments.comments[0].body, "");
+        press(&mut app, KeyCode::Esc);
+        press(&mut app, KeyCode::Enter);
+        assert!(app.modals.is_empty());
+        assert!(app.comments.comments.is_empty());
+    }
+}

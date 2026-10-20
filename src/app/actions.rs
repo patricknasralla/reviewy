@@ -1,13 +1,10 @@
 //! Actions, vim input → action mapping, and `App::apply`.
 
-use std::path::Path;
-
 use super::App;
 use super::state::{Modal, Mode};
-use super::view::FileView;
-use crate::comments::model::{self, Anchor, Selection, Side};
+use crate::comments::model::Side;
 use crate::vim::keys::{Command, Input};
-use crate::vim::motion::{Motion, MotionCtx, Pos};
+use crate::vim::motion::{Motion, MotionCtx};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
@@ -88,7 +85,12 @@ impl App {
                     // task 10: save
                     self.should_quit = true;
                 }
-                None => {}
+                Some(Modal::DeleteComment(id)) => {
+                    self.comments.remove(id);
+                }
+                Some(Modal::CloseComment) => self.close_editor(),
+                // The editor takes its own keys (`App::handle_key`).
+                Some(Modal::Editor(_)) | None => {}
             },
             Action::ModalCancel => {
                 self.modals.pop();
@@ -140,9 +142,7 @@ impl App {
             Action::Visual { line } => self.visual(line),
             Action::ToNormal => self.mode = Mode::Normal,
             Action::Comment => self.comment(),
-            Action::DeleteComment => {
-                self.status = Some("Comments: task 09".into());
-            }
+            Action::DeleteComment => self.delete_comment(),
             Action::Quit => {
                 if !matches!(self.modals.last(), Some(Modal::Quit)) {
                     self.modals.push(Modal::Quit);
@@ -166,24 +166,6 @@ impl App {
         };
     }
 
-    /// Shows the comment target (the cursor line, or the selection) and leaves visual.
-    fn comment(&mut self) {
-        let target = (self.current_file().zip(self.view()))
-            .and_then(|(file, view)| anchor(self.mode, view, &file.path));
-        if let Some(Anchor {
-            side, selection, ..
-        }) = target
-        {
-            let side = match side {
-                Side::Old => "old",
-                Side::New => "new",
-            };
-            self.status = Some(format!("Comment target: {side} {selection}"));
-        }
-        // task 09: open the comment editor
-        self.mode = Mode::Normal;
-    }
-
     /// Opens the next/previous viewable file in explorer order; no wraparound.
     fn next_file(&mut self, next: bool) {
         let Some(current) = self.current else { return };
@@ -200,96 +182,5 @@ impl App {
                 self.status = Some(format!("No {dir} file"));
             }
         }
-    }
-}
-
-/// What Enter comments on; `None` in the explorer or when the side has no lines.
-fn anchor(mode: Mode, view: &FileView, file: &Path) -> Option<Anchor> {
-    view.cursor_line()?;
-    let pos = |p: Pos| model::Pos {
-        line: p.line as u32 + 1,
-        col: p.col as u32 + 1,
-    };
-    let cursor = pos(view.cursor.pos);
-    let selection = match mode {
-        Mode::Normal => Selection::from_lines(cursor.line, cursor.line),
-        Mode::Visual { anchor } => Selection::from_chars(pos(anchor), cursor),
-        Mode::VisualLine { anchor } => Selection::from_lines(pos(anchor).line, cursor.line),
-        Mode::Explorer => return None,
-    };
-    Some(Anchor {
-        file: file.into(),
-        side: view.side,
-        selection,
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::diff::model::{FileDiff, LineKind, Row, SideText};
-
-    fn view() -> FileView {
-        let lines = ["let value = 1;", "call(value);"];
-        let n = lines.len();
-        FileView::new(FileDiff {
-            lhs: None,
-            rhs: Some(SideText {
-                lines: lines.map(String::from).to_vec(),
-                kinds: vec![LineKind::Added; n],
-                changes: vec![Vec::new(); n],
-                highlights: vec![Vec::new(); n],
-            }),
-            rows: (0..n as u32)
-                .map(|l| Row {
-                    lhs: None,
-                    rhs: Some(l),
-                })
-                .collect(),
-            hunks: std::iter::once(0..n).collect(),
-        })
-    }
-
-    #[test]
-    fn anchors_for_each_mode() {
-        let file = Path::new("a.rs");
-        let ctx = MotionCtx {
-            height: 10,
-            wrap: None,
-        };
-        let mut view = view();
-        let target = |mode, view: &FileView| anchor(mode, view, file).unwrap().selection;
-        let at = |line, col| model::Pos { line, col };
-
-        assert_eq!(target(Mode::Normal, &view), Selection::Line { line: 1 });
-
-        view.cursor_motion(Motion::WordForward, None, &ctx);
-        let start = view.cursor.pos;
-        view.cursor_motion(Motion::WordEnd, None, &ctx);
-        assert_eq!(
-            target(Mode::Visual { anchor: start }, &view),
-            Selection::Chars {
-                start: at(1, 5),
-                end: at(1, 9)
-            }
-        );
-
-        view.cursor_motion(Motion::Down, None, &ctx);
-        assert_eq!(
-            target(Mode::VisualLine { anchor: start }, &view),
-            Selection::Lines { start: 1, end: 2 }
-        );
-
-        // Backwards: the anchor is after the cursor.
-        let start = view.cursor.pos;
-        view.cursor_motion(Motion::LineStart, None, &ctx);
-        view.cursor_motion(Motion::WordBackward, None, &ctx);
-        assert_eq!(
-            target(Mode::Visual { anchor: start }, &view),
-            Selection::Chars {
-                start: at(1, 14),
-                end: at(2, 9)
-            }
-        );
     }
 }

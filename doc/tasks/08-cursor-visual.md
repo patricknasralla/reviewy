@@ -1,4 +1,4 @@
-# Task 08 — Cursor and visual modes
+# Task 08 - Cursor and visual modes
 
 ## Goal
 
@@ -20,7 +20,7 @@ From task 07 (see its handoff notes): per-file state is `app::view::FileView` (`
   - Screen-row motions must respect the **diff view's** row layout: a row's height may exceed the active side's own wrapped height (padding from the other side). Moving down from the last segment of a line goes to the first segment of the next line on that side, skipping padding.
 - Visual modes: every cursor-mode motion extends the selection; Esc → Cursor mode. Selections never cross columns.
 - Horizontal scroll with wrap off: keep the cursor column visible on the active side (both columns scroll together).
-- Rendering: cursor as a reversed cell on the active side; selection with a distinct background (use the theme's `active_line_background` lightened, or a `selection` key if the theme has one — document the choice).
+- Rendering: cursor as a reversed cell on the active side; selection with a distinct background (use the theme's `active_line_background` lightened, or a `selection` key if the theme has one - document the choice).
 - The comment target is a `comments::model::Anchor { file, side: Side, selection: Selection }` (task 06; 1-based, inclusive, cols in chars), built on Enter:
   - Cursor mode: `Selection::from_lines(line, line)` -> `Line` (editor starts empty).
   - Visual: `Selection::from_chars(anchor, cursor)` -> `Chars`; it orders the ends, so a backwards selection needs no special handling.

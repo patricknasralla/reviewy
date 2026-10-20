@@ -1,10 +1,10 @@
-# Reviewy — Specification (v1)
+# Reviewy - Specification (v1)
 
 > Working title. Status: spec for v1. Spikes resolved (§17).
 
 ## 1. Purpose
 
-Reviewy is a terminal UI for quickly reviewing a project's uncommitted changes — typically changes made by an AI agent — and leaving line-anchored review comments, similar to GitHub's PR review UI.
+Reviewy is a terminal UI for quickly reviewing a project's uncommitted changes - typically changes made by an AI agent - and leaving line-anchored review comments, similar to GitHub's PR review UI.
 
 The goal is the least possible friction between "the agent says it's done" and "I understand the code it wrote". Today the review loop usually runs through PRs, which is slow enough that review gets deferred until the end, producing large, hard-to-review PRs. Reviewy keeps the loop tight: review small changes locally and often, write comments, hand them straight back to the agent.
 
@@ -166,6 +166,7 @@ src/
     view.rs            FileView: per-file diff, text cursor, active/home side, scroll, row layout
     actions.rs         Action enum, vim::Command → Action mapping, App::apply
     open.rs            open-file pipeline (content, limits, difft, align, highlight)
+    comment.rs         comment flows: create/edit/delete, editor input, comment target
   ui.rs                declares submodules; top-level draw()
   ui/
     explorer.rs        explorer overlay
@@ -212,10 +213,10 @@ struct ChangedFile {
 
 Porcelain v2 record types (with `-z`):
 
-- `1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>` — ordinary change. Classified by modes, not XY, since only HEAD vs worktree matters: `mH` and `mW` both `000000` → dropped (no change vs HEAD, e.g. `AD`); `mH` zero → `Added` (includes intent-to-add `.A`); `mW` zero → `Deleted`; otherwise `Modified`.
-- `2 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <score> <path>\0<origPath>` — rename/copy; the original path is the next NUL-separated field.
-- `u <XY> <sub> ...` — unmerged → `Conflicted`.
-- `? <path>` — untracked.
+- `1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>` - ordinary change. Classified by modes, not XY, since only HEAD vs worktree matters: `mH` and `mW` both `000000` → dropped (no change vs HEAD, e.g. `AD`); `mH` zero → `Added` (includes intent-to-add `.A`); `mW` zero → `Deleted`; otherwise `Modified`.
+- `2 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <score> <path>\0<origPath>` - rename/copy; the original path is the next NUL-separated field.
+- `u <XY> <sub> ...` - unmerged → `Conflicted`.
+- `? <path>` - untracked.
 - `<sub>` starting with `S` (e.g. `S...`) → `Submodule`; `N...` is a normal file.
 
 ### Numstat pass
@@ -252,7 +253,7 @@ Before diffing, check both sides against the limits:
 | `max_bytes` | 1 MiB |
 | `max_line_length` | 1000 chars |
 
-If any limit is exceeded, show a modal: "Large file (N lines, X KB, longest line L). View anyway?" (each number is the max over both sides) — Enter views, Esc cancels. `max_line_length` catches minified/obfuscated files that are few lines but huge.
+If any limit is exceeded, show a modal: "Large file (N lines, X KB, longest line L). View anyway?" (each number is the max over both sides) - Enter views, Esc cancels. `max_line_length` catches minified/obfuscated files that are few lines but huge.
 
 ## 7. Diff engine
 
@@ -345,7 +346,7 @@ struct Row { lhs: Option<u32>, rhs: Option<u32> } // 0-based line indices
 Alignment (`align.rs`):
 
 - `changed`: rows come directly from difft's `aligned_lines`. Any index ≥ that side's line count becomes `None`; rows that become `(None, None)` are dropped (removes the phantom trailing pair).
-- Line kinds from chunks: a line listed in a chunk whose row has both sides → `Changed`; listed with no opposite side → `Removed` (lhs) / `Added` (rhs). Lines not in any chunk → `Unchanged`, **including unpaired ones** (e.g. difft treats reformatting — one line split into several — as unchanged; the extra lines get padding opposite but no tint).
+- Line kinds from chunks: a line listed in a chunk whose row has both sides → `Changed`; listed with no opposite side → `Removed` (lhs) / `Added` (rhs). Lines not in any chunk → `Unchanged`, **including unpaired ones** (e.g. difft treats reformatting - one line split into several - as unchanged; the extra lines get padding opposite but no tint).
 - Change spans: difft's raw byte offsets are converted to byte offsets in the tab-expanded line when the file is loaded. Zero-width spans are dropped. Nothing downstream sees raw offsets.
 - `created` / untracked: all rows `{ lhs: None, rhs: Some(i) }`, all lines `Added`. `deleted`: mirror.
 - `unchanged` (pure rename, empty untracked file): rows paired 1:1, all `Unchanged`.
@@ -361,15 +362,15 @@ Alignment (`align.rs`):
 - Highlight queries: the grammar crates' bundled queries (MIT). Zed's own `.scm` queries are GPL and are **not** used.
 - Language detection by extension: `.rs`; `.py`, `.pyi`; `.cs`; `.ts`, `.mts`, `.cts`; `.tsx`. Unknown → plain text.
 - Each side is highlighted once, on file open, into per-line `StyledSpan`s, then cached. A `Highlighter` built once in `main` from the resolved theme (owned by `App`) configures each language on first use; `Highlighter::apply(&mut FileDiff, &ChangedFile)` highlights each side's normalized lines (CR-stripped, tab-expanded, so span offsets index `SideText::lines` directly). The old side of a rename is detected by its old path.
-- API (0.27): `Highlighter::highlight(config, source, None, None, injection_callback)` — 5 arguments.
+- API (0.27): `Highlighter::highlight(config, source, None, None, injection_callback)` - 5 arguments.
 
 Per-language `HighlightConfiguration` (highlights / injections / locals):
 
 | Language | Highlights | Injections | Locals |
 |---|---|---|---|
-| Rust | `tree_sitter_rust::HIGHLIGHTS_QUERY` | `INJECTIONS_QUERY` | — |
-| Python | `HIGHLIGHTS_QUERY` | — | — |
-| C# | `HIGHLIGHTS_QUERY` (crate ships no injections/locals) | — | — |
+| Rust | `tree_sitter_rust::HIGHLIGHTS_QUERY` | `INJECTIONS_QUERY` | - |
+| Python | `HIGHLIGHTS_QUERY` | - | - |
+| C# | `HIGHLIGHTS_QUERY` (crate ships no injections/locals) | - | - |
 | TypeScript | JS `HIGHLIGHT_QUERY` + TS `HIGHLIGHTS_QUERY` | JS `INJECTIONS_QUERY` | JS `LOCALS_QUERY` + TS `LOCALS_QUERY` |
 | TSX | JS `HIGHLIGHT_QUERY` + JS `JSX_HIGHLIGHT_QUERY` + TS `HIGHLIGHTS_QUERY` | JS `INJECTIONS_QUERY` | JS + TS locals |
 
@@ -404,7 +405,7 @@ Theme resolution:
 0. `ui.theme` unset → the bundled default (`default_theme::VARIANT` in `src/defaults/default_theme.rs`). The default theme is not a `defaults.toml` key, because its name and its compiled-in JSON must change together.
 1. `theme` in config is either a variant name (e.g. `"Tokyo Night Moon"`), matched against variant names across all theme families, or a path to a theme JSON file plus `theme_variant`. A relative path is relative to the config file that sets it.
 2. Names are looked up in `~/.config/reviewy/themes/*.json`, then bundled themes. User themes shadow bundled ones.
-3. No lookup in Zed's own directories — Reviewy's themes are decoupled so they can diverge.
+3. No lookup in Zed's own directories - Reviewy's themes are decoupled so they can diverge.
 4. Any failure (name not found, unreadable or invalid file, missing variant or required key) logs a warning, falls back to the bundled default and shows the error in the status line at startup.
 
 Bundled: `src/defaults/tokyo-night.json`, compiled in via `include_str!` in `src/defaults/default_theme.rs`. It contains four variants (Tokyo Night, Tokyo Night Storm, Tokyo Night Moon, Tokyo Night Light); the default is **Tokyo Night Moon**.
@@ -458,9 +459,10 @@ For "Load existing", a discarded set is only dropped from memory; the files are 
 
 ### Comment editor
 
-- Modal box over the diff view, titled e.g. `Comment — src/foo.rs:42-45 (new)`.
-- Own widget (`ui/editor.rs`): `Vec<String>` buffer, soft-wrapped via `vim/wrap.rs`.
-- v1 is insert-only: typing, Enter (newline), Backspace, Delete, arrows, Home/End, scrolling. Bracketed paste (`Event::Paste`) inserts text verbatim.
+- Modal box over the diff view, titled e.g. `Comment - src/foo.rs:42-45 (new)`.
+- Own widget (`ui/editor.rs`): `Vec<String>` buffer, soft-wrapped via `vim/wrap.rs`. A line exactly filling the width gets an empty trailing screen row, so a cursor at its end stays in the box. Real terminal cursor.
+- Lives on the modal stack; keys bypass the vim key parser while it is the top modal. `Ctrl-q` still opens the quit modal.
+- v1 is insert-only: typing, Enter (newline), Backspace, Delete, arrows (Up/Down by screen row), Home/End, PageUp/PageDown. Tab and Ctrl-h do nothing. Bracketed paste (`Event::Paste`) inserts the text with line breaks normalized to `\n` and tabs expanded to spaces (`tab_width`, per pasted line): a raw tab has no display width.
 - Edits update the in-memory comment immediately (no manual save).
 - Esc opens the "close comment" confirmation (protects against habitual Esc taps).
 - On close, a comment whose body is empty/whitespace is removed from the model (new or existing).
@@ -552,7 +554,7 @@ struct Comment {
     body: String,
 }
 
-struct Anchor { file: PathBuf, side: Side, selection: Selection }  // file: repo-relative path on the commented side
+struct Anchor { file: PathBuf, side: Side, selection: Selection }  // file: repo-relative path on the commented side (old path of a rename on the old side)
 enum Side { Old, New }       // Old = HEAD, New = working tree
 
 enum Selection {             // 1-based, inclusive; cols in chars
@@ -575,7 +577,7 @@ struct Excerpt { start: u32, lines: Vec<String> }  // contiguous lines from `sta
 
 ### Lifecycle
 
-- **Create:** Enter in Normal mode on an uncommented line (starts empty), or Enter in Visual/VisualLine mode. Visual modes prefill the body with the selection in a fenced block tagged with the file's language; the fence is longer than any backtick run in the selection. Cursor is placed on a new line below the fence.
+- **Create:** Enter in Normal mode on an uncommented line (starts empty), or Enter in Visual/VisualLine mode. Visual modes (including a single-line `V`) prefill the body with the selection in a fenced block tagged with the file's language; the fence is longer than any backtick run in the selection. Cursor is placed on a new line below the fence.
 - **Edit:** Normal-mode Enter on a commented line.
 - **Delete:** `D` in Normal mode (confirmation), or closing the editor with an empty body.
 
@@ -731,10 +733,10 @@ Highlighting versions were verified together (S3): one `tree-sitter` in the tree
 - **Unit tests:**
   - `git.rs`: porcelain v2 parsing from fixture bytes (modified, added, deleted, renamed, untracked, conflicted, submodule, mode-only).
   - `diff/difft.rs` + `align.rs`: fixture difft JSON → rows/hunks. Fixtures in `tests/fixtures/difft/<case>/` (`old.*`, `new.*`, `difft.json`, captured with difft 0.71.0):
-    - `mod`: modified Rust — added/removed/changed lines, `changes: []` entries, phantom trailing pair.
-    - `reformat`: one line split into several — unpaired rows outside any chunk (→ `Unchanged`).
-    - `uni`: multibyte characters — byte-offset spans.
-    - `tab`: tab-indented line — raw-offset → tab-expanded conversion.
+    - `mod`: modified Rust - added/removed/changed lines, `changes: []` entries, phantom trailing pair.
+    - `reformat`: one line split into several - unpaired rows outside any chunk (→ `Unchanged`).
+    - `uni`: multibyte characters - byte-offset spans.
+    - `tab`: tab-indented line - raw-offset → tab-expanded conversion.
     - Trivial statuses (`created`, `deleted`, `unchanged`) and zero-width spans are inline JSON strings in the tests.
   - `vim/`: key parser (counts, chords, Esc), motions over fixture text, wrap layout ↔ screen-row motions.
   - `highlight/theme.rs`: Zed theme parsing, alpha blending, capture fallback.

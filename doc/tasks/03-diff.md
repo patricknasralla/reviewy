@@ -1,4 +1,4 @@
-# Task 03 — Diff engine and alignment
+# Task 03 - Diff engine and alignment
 
 ## Goal
 

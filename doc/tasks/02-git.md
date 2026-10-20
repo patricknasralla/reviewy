@@ -1,4 +1,4 @@
-# Task 02 — Git integration
+# Task 02 - Git integration
 
 ## Goal
 

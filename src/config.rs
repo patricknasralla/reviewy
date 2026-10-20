@@ -15,7 +15,6 @@ const DEFAULTS: &str = include_str!("defaults/defaults.toml");
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-#[allow(dead_code, reason = "all fields read by task 09; remove then")]
 pub struct Config {
     pub ui: UiConfig,
     pub limits: LimitsConfig,

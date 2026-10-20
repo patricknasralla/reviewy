@@ -1,4 +1,4 @@
-# Task 06 — Comments model and output
+# Task 06 - Comments model and output
 
 ## Goal
 
@@ -35,7 +35,7 @@ The reviewer selects lines or text in the diff view and writes a comment. On exi
 ### `comments/render_md.rs`
 
 - `fn render(set: &CommentSet, preamble: Option<&str>) -> String` exactly following the `comments.md` layout in §12: title, preamble (default text from §12 unless overridden), base commit (short 8-char SHA + ref), one `##` section per file, comments sorted by file then start line.
-- Heading forms: `### #3 — line 42, cols 9–20 (new)`, `### #5 — lines 10–12 (old: base commit version)`; cols only for charwise comments.
+- Heading forms: `### #3 - line 42, cols 9–20 (new)`, `### #5 - lines 10–12 (old: base commit version)`; cols only for charwise comments.
 - Context block: fenced with the language tag, right-aligned line numbers, `>` marking selected lines, `  ` otherwise. Fence length chosen as in `prefill_body`.
 - `Selected: \`…\`` line for charwise comments only (single-line selections; for multi-line charwise selections show it as a fenced block instead).
 - Body verbatim after it.

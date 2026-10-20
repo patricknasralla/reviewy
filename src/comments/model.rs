@@ -220,10 +220,17 @@ impl CommentSet {
             .map(|c| c.id)
     }
 
-    pub fn count_for(&self, file: &Path) -> usize {
+    /// Comments on a file: old-side ones on `old`, new-side ones on `new`.
+    pub fn count_for(&self, old: &Path, new: &Path) -> usize {
         self.comments
             .iter()
-            .filter(|c| c.anchor.file == file)
+            .filter(|c| {
+                c.anchor.file
+                    == match c.anchor.side {
+                        Side::Old => old,
+                        Side::New => new,
+                    }
+            })
             .count()
     }
 }

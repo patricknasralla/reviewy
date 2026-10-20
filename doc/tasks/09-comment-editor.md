@@ -1,4 +1,4 @@
-# Task 09 — Comment editor and comment lifecycle
+# Task 09 - Comment editor and comment lifecycle
 
 ## Goal
 
@@ -8,7 +8,7 @@ Read first: `doc/spec.md` §10 (comment editor, modals), §11 (Normal mode Enter
 
 ## Context
 
-Task 08 merged row and cursor modes into one **Normal** mode (text cursor always present; see its handoff notes). Enter in Normal/Visual/VisualLine maps to `Action::Comment`; `App::comment()` (`app/actions.rs`) builds a `comments::model::Anchor` with `anchor(mode, view, file)` and currently only shows it in the status line (`// task 09: open the comment editor`) — replace that. `comments::model` (task 06) provides `CommentSet`, `draft`, `prefill_body`, `overlaps`, `at`. `App` already has an empty `comments: CommentSet` field (base `HEAD` + startup SHA); the explorer already shows `[n]` via `count_for`, and `ui::diff_view` has a blank one-char comment-marker slot in each gutter (`GUTTER_EXTRA`). Comments live in memory only in this task; saving is task 10.
+Task 08 merged row and cursor modes into one **Normal** mode (text cursor always present; see its handoff notes). Enter in Normal/Visual/VisualLine maps to `Action::Comment`; `App::comment()` (`app/actions.rs`) builds a `comments::model::Anchor` with `anchor(mode, view, file)` and currently only shows it in the status line (`// task 09: open the comment editor`) - replace that. `comments::model` (task 06) provides `CommentSet`, `draft`, `prefill_body`, `overlaps`, `at`. `App` already has an empty `comments: CommentSet` field (base `HEAD` + startup SHA); the explorer already shows `[n]` via `count_for`, and `ui::diff_view` has a blank one-char comment-marker slot in each gutter (`GUTTER_EXTRA`). Comments live in memory only in this task; saving is task 10.
 
 ## Deliverables
 
@@ -31,7 +31,7 @@ Task 08 merged row and cursor modes into one **Normal** mode (text cursor always
 
 ### Rendering
 
-- Editor modal: centered box (~70% width, ~50% height) over the diff view, titled `Comment — <file>:<start>[-<end>] (<side>)`.
+- Editor modal: centered box (~70% width, ~50% height) over the diff view, titled `Comment - <file>:<start>[-<end>] (<side>)`.
 - Diff view gutter: comment marker `●` on lines covered by a comment, on the side the comment was made on.
 - Explorer: `[n]` count per file.
 
@@ -48,4 +48,31 @@ Task 08 merged row and cursor modes into one **Normal** mode (text cursor always
 
 ## Handoff notes
 
-_To be filled in by the implementing agent._
+### Public interfaces
+
+- `ui::editor::Editor { pub id: u32, pub title: String, .. }`: `new(id, title, body: &str)` (cursor at the end), `key(KeyEvent) -> bool` (text changed), `paste(&str, tab_width)`, `text() -> String`, `resize(width, height)`, `draw(frame, area, theme, focused)`; `impl vim::motion::TextView` (unused in v1). Free fns `rect(area)` (box, 70% x 50%) and `inner(area)` (text area, used by the app to size the editor).
+- `app::state::Modal` gained `Editor(Editor)`, `DeleteComment(u32)`, `CloseComment`.
+- `app/comment.rs` (new): `App::{comment(), delete_comment(), editor_key(KeyEvent), close_editor()}` (`pub(super)`), `pub fn App::paste(&str)` (no-op unless the editor is on top); `pub fn side_path(&ChangedFile, Side) -> &Path`; private `anchor(mode, view, &ChangedFile)` (moved from `actions.rs` with its test).
+- `App::editing() -> bool` (editor anywhere on the stack; status line shows `INSERT`), private `App::view_area() -> Rect`.
+- `git::ChangedFile::old_path() -> &Path` (`from` for renames).
+- `comments::model::CommentSet::count_for(old: &Path, new: &Path)` (task 06 module change: was `count_for(file)`); counts old-side comments on `old`, new-side on `new`.
+- `diff::align::expand_tabs` is now `pub` (used by paste).
+
+### Decisions and deviations (developer decisions; spec §5, §10, §12 updated)
+
+- **Editor on the modal stack**, mode stays `Normal` underneath. `App::handle_key` routes keys straight to `editor_key` when the editor is the top modal (no `KeyParser`); Esc pushes `CloseComment`, Ctrl-q applies `Action::Quit`, key release events are ignored. Close/Delete/Quit modals go through the normal parser path.
+- **Old side of a rename anchors to the old path** (`side_path`). Gutter markers and explorer counts look up by side path.
+- **Paste**: `\r\n`/`\r` -> `\n`, tabs expanded per pasted line (tab stops relative to the pasted line, not the buffer line). Deviation from spec "verbatim". Tab key unmapped.
+- **Full-width line**: gets an empty trailing screen row; a cursor at its end sits there. Up/Down keep a sticky display column; past a row's end they clamp to its last char (the line end on the last row). Home/End are logical line start/end.
+- **Real terminal cursor** (`set_cursor_position`), only when the editor is the top modal.
+- Prefill is decided by **mode**, not selection kind, so `V Enter` on one line (`Selection::Line`) still prefills.
+- New comment flow: `draft` with empty body, `add`, then `get_mut` to set `prefill_body(selected_text)`. Overlap refusal keeps the current (visual) mode.
+- `D` on an uncommented line: status "No comment on this line".
+- Gutter marker `●` in `theme.modified`. Delete modal "Delete comment #N?" (`Enter: delete / Esc: cancel`); close modal "Close comment?" (`Enter: close / Esc: edit`).
+- **Dead code:** allows removed from `mod comments;` and `Config`; `#[allow(dead_code, reason = "used by task 10; remove then")]` on `pub mod store;` only (`render_md` needed none). Task 10 updated.
+- **No em-dashes** (developer decision): all replaced with hyphens in docs; title is `Comment - <file>:<lines> (<side>)`.
+
+### Left undone / flagged
+
+- Manual check (scratch repo, GNU screen): §11 examples, reopen, delete, overlap message, markers/counts, rename old side, Ctrl-q and Ctrl-h in the editor. Not verified manually: resize with the editor open (screen did not resize the detached window) and real bracketed paste (unit-tested only).
+- Body sync rebuilds the whole body string per keystroke and the editor recomputes wrap for all lines per key; fine for comment-sized text.

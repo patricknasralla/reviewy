@@ -9,6 +9,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use crate::app::App;
+use crate::app::comment::side_path;
 use crate::app::state::Mode;
 use crate::app::view::FileView;
 use crate::comments::model::Side;
@@ -42,7 +43,9 @@ pub fn columns(diff: &FileDiff, width: u16) -> [Column; 2] {
 
 /// Draws visible rows only, from the view's scroll line down to the bottom of `area`.
 pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
-    let Some(view) = app.view() else { return };
+    let Some((file, view)) = app.current_file().zip(app.view()) else {
+        return;
+    };
     let diff = &view.diff;
     let tops = view.tops();
     let cols = columns(diff, area.width);
@@ -69,11 +72,17 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
                 cursor: active && view.row == r,
             };
             if let Some((text, line)) = view.text(side).zip(view.line(r, side)) {
+                let comment = (app.comments)
+                    .at(side_path(file, side), side, line + 1)
+                    .is_some();
                 let line = line as usize;
-                let marks = if active {
-                    marks(app.mode, view, line)
-                } else {
-                    Marks::default()
+                let marks = Marks {
+                    comment,
+                    ..if active {
+                        marks(app.mode, view, line)
+                    } else {
+                        Marks::default()
+                    }
                 };
                 cell.draw(buf, rect, cols[i], text, line, marks);
             }
@@ -83,9 +92,10 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
     }
 }
 
-/// Text cursor and selection on one line, in chars.
+/// Comment marker, text cursor and selection on one line, in chars.
 #[derive(Default)]
 struct Marks {
+    comment: bool,
     /// Half-open; may extend past the line end.
     selection: Option<Range<usize>>,
     cursor: Option<usize>,
@@ -110,6 +120,7 @@ fn marks(mode: Mode, view: &FileView, line: usize) -> Marks {
         _ => None,
     };
     Marks {
+        comment: false,
         selection,
         cursor: (cur.line == line).then_some(cur.col),
     }
@@ -174,7 +185,10 @@ impl Cell<'_> {
             let gutter = Line::from(vec![
                 Span::styled(format!(" {:>digits$}", i + 1), Style::new().fg(number_fg)),
                 Span::styled(marker.to_string(), Style::new().fg(marker_fg)),
-                Span::raw("  "),
+                Span::styled(
+                    if marks.comment { "● " } else { "  " },
+                    Style::new().fg(theme.modified),
+                ),
             ]);
             buf.set_line(rect.x, rect.y, &gutter, col.gutter);
         }

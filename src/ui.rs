@@ -37,8 +37,8 @@ pub fn draw(frame: &mut Frame, app: &App) {
     if app.mode == Mode::Explorer {
         explorer::draw(frame, view, app);
     }
-    for modal in &app.modals {
-        modals::draw(frame, view, &app.theme, modal);
+    for (i, modal) in app.modals.iter().enumerate() {
+        modals::draw(frame, view, &app.theme, modal, i + 1 == app.modals.len());
     }
     status::draw(frame, status, app);
 }
@@ -176,6 +176,15 @@ mod tests {
         assert_ne!(buf[(52, 2)].bg, app.theme.selection);
         assert!(buf[(51, 2)].modifier.contains(Modifier::REVERSED));
         insta::assert_snapshot!(backend);
+    }
+
+    #[test]
+    fn comment_editor() {
+        let mut app = app(vec![file("src/main.rs", FileStatus::Modified, false)], true);
+        open(&mut app, MODIFIED, Some(OLD), Some(NEW));
+        app.handle_key(KeyEvent::from(KeyCode::Enter));
+        app.paste("Use a constant here.\nWhy 2?");
+        insta::assert_snapshot!(render(&app));
     }
 
     #[test]
