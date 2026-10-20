@@ -12,6 +12,7 @@ tab_width = 4
 # Strength (0-1) of the added/deleted color blended onto the background.
 line = 0.02   # changed lines
 token = 0.10  # changed tokens
+selection = 0.15  # foreground onto the active line, for themes without a selection color
 
 [limits]
 max_lines = 5000
@@ -34,3 +35,6 @@ Each comment shows the commented lines (marked `>`) with surrounding context. Co
 
 [difft]
 binary = "difft"
+# Graph vertices before difft falls back to a line diff (DFT_GRAPH_LIMIT). Lower is
+# faster on heavily changed files; difft's own default is 3000000.
+graph_limit = 500000

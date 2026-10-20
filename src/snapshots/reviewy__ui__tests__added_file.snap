@@ -25,4 +25,4 @@ expression: render(&app)
 "                                                                                "
 "                                                                                "
 "                                                                                "
-" ROW  src/main.rs  1:1                                                          "
+" NORMAL  src/main.rs  1:1                                                       "

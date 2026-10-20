@@ -1,9 +1,11 @@
 //! Per-file view: diff plus row cursor, active side, scroll and cached row layout.
 
+use std::ops::Range;
+
 use crate::comments::model::Side;
 use crate::diff::model::{FileDiff, LineKind, SideText};
 use crate::ui::diff_view::columns;
-use crate::vim::motion::Motion;
+use crate::vim::motion::{self, Cursor, Motion, MotionCtx, Pos};
 use crate::vim::wrap;
 
 const SCROLL_MARGIN: usize = 3;
@@ -15,8 +17,14 @@ pub struct FileView {
     home: Side,
     /// Cursor row index into `diff.rows`.
     pub row: usize,
-    /// First visible row.
+    /// Text cursor on the active side.
+    pub cursor: Cursor,
+    /// First visible screen line.
     pub scroll: usize,
+    /// First visible display column when not wrapping; shared by both columns.
+    pub hscroll: usize,
+    /// Row of each line, per side (old, new).
+    row_of: [Vec<usize>; 2],
     layout: Layout,
 }
 
@@ -26,6 +34,8 @@ struct Layout {
     key: Option<(u16, bool)>,
     /// Screen line where each row starts; one extra entry for the end.
     tops: Vec<usize>,
+    /// Text widths of the (old, new) columns.
+    text: [u16; 2],
 }
 
 impl FileView {
@@ -36,19 +46,28 @@ impl FileView {
         } else {
             Side::Old
         };
+        let row_of = [Side::Old, Side::New].map(|side| rows_of(&diff, side));
         let mut view = Self {
             diff,
             side,
             home: side,
             row: 0,
+            cursor: Cursor::default(),
             scroll: 0,
+            hscroll: 0,
+            row_of,
             layout: Layout::default(),
         };
         match view.targets().first() {
             Some(&(row, side)) => (view.row, view.side) = (row, side),
             None => view.row = view.nearest(0).unwrap_or(0),
         }
+        view.land();
         view
+    }
+
+    pub fn text(&self, side: Side) -> Option<&SideText> {
+        side_text(&self.diff, side)
     }
 
     /// 0-based line of `side` in `row`; `None` for padding.
@@ -69,32 +88,25 @@ impl FileView {
         &self.layout.tops
     }
 
-    /// Row-mode vertical motions; others are ignored.
-    pub fn motion(&mut self, motion: Motion, count: Option<usize>, height: usize) {
-        let n = count.unwrap_or(1);
-        let half = (height / 2).max(1);
-        match motion {
-            Motion::Down => self.step(n, true),
-            Motion::Up => self.step(n, false),
-            Motion::HalfPageDown => self.step(half, true),
-            Motion::HalfPageUp => self.step(half, false),
-            Motion::FileStart | Motion::FileEnd if count.is_some() => self.goto_line(n),
-            Motion::FileStart => self.row = self.nearest(0).unwrap_or(self.row),
-            Motion::FileEnd => {
-                let last = self.diff.rows.len().saturating_sub(1);
-                self.row = self.nearest(last).unwrap_or(self.row);
-            }
-            _ => {}
+    /// Text width of the active column; valid after `refresh_layout`.
+    pub fn text_width(&self) -> u16 {
+        self.layout.text[index(self.side)]
+    }
+
+    /// Cursor motion over the active side; the cursor row follows the line.
+    pub fn cursor_motion(&mut self, motion: Motion, count: Option<usize>, ctx: &MotionCtx) {
+        let Some(text) = self.text(self.side) else {
+            return;
+        };
+        let cursor = motion::apply(motion, count, self.cursor, text, ctx);
+        if let Some(&row) = self.row_of[index(self.side)].get(cursor.pos.line) {
+            (self.cursor, self.row) = (cursor, row);
         }
     }
 
     /// Makes `side` active and moves to the nearest row with a line there; no-op if the side is absent.
     pub fn switch(&mut self, side: Side) {
-        let present = match side {
-            Side::Old => self.diff.lhs.is_some(),
-            Side::New => self.diff.rhs.is_some(),
-        };
-        if !present {
+        if self.text(side).is_none() {
             return;
         }
         self.side = side;
@@ -102,6 +114,7 @@ impl FileView {
         if let Some(row) = self.nearest(self.row) {
             self.row = row;
         }
+        self.land();
     }
 
     /// Moves `count` hunks, switching side if the hunk changes only the other one; `false` if
@@ -119,10 +132,12 @@ impl FileView {
             return false;
         };
         (self.row, self.side) = target;
+        self.land();
         true
     }
 
-    /// Recomputes row heights if the width or wrap changed, then scrolls the cursor into view.
+    /// Recomputes row heights if the width or wrap changed, then scrolls the text cursor into
+    /// view (its screen line, and its column when not wrapping).
     pub fn refresh_layout(&mut self, width: u16, height: usize, wrap: bool) {
         if self.layout.key != Some((width, wrap)) {
             let [l, r] = columns(&self.diff, width);
@@ -144,38 +159,44 @@ impl FileView {
             self.layout = Layout {
                 key: Some((width, wrap)),
                 tops,
+                text: [l.text, r.text],
             };
         }
-        self.keep_visible(height);
+        if self.diff.rows.is_empty() {
+            self.scroll = 0;
+            return;
+        }
+        let span = self.focus(wrap);
+        self.keep_visible(height, span);
+        if !wrap {
+            self.keep_column();
+        }
     }
 
     fn has_line(&self, row: usize) -> bool {
         self.line(row, self.side).is_some()
     }
 
-    fn step(&mut self, n: usize, down: bool) {
-        for _ in 0..n {
-            let next = if down {
-                (self.row + 1..self.diff.rows.len()).find(|&r| self.has_line(r))
-            } else {
-                (0..self.row).rev().find(|&r| self.has_line(r))
-            };
-            match next {
-                Some(row) => self.row = row,
-                None => break,
-            }
-        }
+    /// The text cursor's line on the active side.
+    fn cursor_text(&self) -> Option<&str> {
+        let text = self.text(self.side)?;
+        text.lines.get(self.cursor.pos.line).map(String::as_str)
     }
 
-    /// 1-based line `n` on the active side, or the last line past the end.
-    fn goto_line(&mut self, n: usize) {
-        let target = n.saturating_sub(1) as u32;
-        let rows = 0..self.diff.rows.len();
-        let found = rows
-            .clone()
-            .find(|&r| self.line(r, self.side).is_some_and(|l| l >= target))
-            .or_else(|| rows.rev().find(|&r| self.has_line(r)));
-        self.row = found.unwrap_or(self.row);
+    /// Puts the text cursor on the first non-blank char of the cursor row's line.
+    fn land(&mut self) {
+        let Some(line) = self.cursor_line() else {
+            return;
+        };
+        let text = &self.text(self.side).unwrap().lines[line as usize];
+        let col = motion::first_non_blank(text);
+        self.cursor = Cursor {
+            pos: Pos {
+                line: line as usize,
+                col,
+            },
+            want: wrap::display_col(text, col),
+        };
     }
 
     /// Nearest row with a line on the active side; ties go up.
@@ -191,13 +212,10 @@ impl FileView {
     /// Per hunk, its first changed row on the home side, else on the other side (pure
     /// additions/deletions). Rows strictly increase, as hunks don't overlap.
     fn targets(&self) -> Vec<(usize, Side)> {
-        let other = match self.home {
-            Side::Old => Side::New,
-            Side::New => Side::Old,
-        };
+        let sides = [self.home, other(self.home)];
         (self.diff.hunks.iter())
             .filter_map(|h| {
-                [self.home, other].into_iter().find_map(|side| {
+                sides.into_iter().find_map(|side| {
                     let row = h.clone().find(|&r| self.changed(r, side))?;
                     Some((row, side))
                 })
@@ -206,36 +224,97 @@ impl FileView {
     }
 
     fn changed(&self, row: usize, side: Side) -> bool {
-        let text = match side {
-            Side::Old => &self.diff.lhs,
-            Side::New => &self.diff.rhs,
-        };
-        match (text, self.line(row, side)) {
+        match (self.text(side), self.line(row, side)) {
             (Some(text), Some(i)) => text.kinds[i as usize] != LineKind::Unchanged,
             _ => false,
         }
     }
 
-    /// Keeps the cursor row `SCROLL_MARGIN` screen lines from the edges, where rows exist there.
-    fn keep_visible(&mut self, height: usize) {
+    /// The text cursor's screen line.
+    fn focus(&self, wrap: bool) -> Range<usize> {
         let tops = &self.layout.tops;
-        if self.diff.rows.is_empty() {
-            self.scroll = 0;
-            return;
-        }
+        let seg = match self.cursor_text() {
+            Some(line) if wrap => wrap::to_screen(line, self.text_width(), self.cursor.pos.col).0,
+            _ => 0,
+        };
+        let top = tops[self.row] + seg;
+        top..top + 1
+    }
+
+    /// Keeps `span` `SCROLL_MARGIN` screen lines from the edges, where lines exist there.
+    fn keep_visible(&mut self, height: usize, span: Range<usize>) {
+        let end = self.layout.tops[self.layout.tops.len() - 1];
         let margin = SCROLL_MARGIN.min(height / 2);
-        let (top, bottom) = (tops[self.row], tops[self.row + 1]);
-        let up = top.saturating_sub(margin);
-        if tops[self.scroll] > up {
-            self.scroll = tops.partition_point(|&t| t <= up) - 1;
+        let up = span.start.saturating_sub(margin);
+        if self.scroll > up {
+            self.scroll = up;
         }
-        let below = margin.min(tops[tops.len() - 1] - bottom);
-        let need = (bottom + below).saturating_sub(height);
-        if tops[self.scroll] < need {
-            // A row taller than the viewport still starts on screen.
-            self.scroll = tops.partition_point(|&t| t < need).min(self.row);
+        let below = margin.min(end - span.end);
+        let need = (span.end + below).saturating_sub(height);
+        if self.scroll < need {
+            // A span taller than the viewport still starts on screen.
+            self.scroll = need.min(span.start);
         }
     }
+
+    /// Scrolls horizontally so the text cursor's cell is inside the active column.
+    fn keep_column(&mut self) {
+        let Some(line) = self.cursor_text() else {
+            return;
+        };
+        let col = self.cursor.pos.col;
+        let start = wrap::display_col(line, col);
+        let end = wrap::display_col(line, col + 1).max(start + 1);
+        let width = usize::from(self.text_width());
+        if start < self.hscroll {
+            self.hscroll = start;
+        } else if end > self.hscroll + width {
+            self.hscroll = end.saturating_sub(width);
+        }
+    }
+}
+
+fn side_text(diff: &FileDiff, side: Side) -> Option<&SideText> {
+    match side {
+        Side::Old => diff.lhs.as_ref(),
+        Side::New => diff.rhs.as_ref(),
+    }
+}
+
+fn index(side: Side) -> usize {
+    match side {
+        Side::Old => 0,
+        Side::New => 1,
+    }
+}
+
+fn other(side: Side) -> Side {
+    match side {
+        Side::Old => Side::New,
+        Side::New => Side::Old,
+    }
+}
+
+/// Row of each of `side`'s lines; a line missing from the rows gets the previous line's row.
+fn rows_of(diff: &FileDiff, side: Side) -> Vec<usize> {
+    let n = side_text(diff, side).map_or(0, |t| t.lines.len());
+    let mut rows = vec![None; n];
+    for (r, row) in diff.rows.iter().enumerate() {
+        let line = match side {
+            Side::Old => row.lhs,
+            Side::New => row.rhs,
+        };
+        if let Some(slot) = line.and_then(|l| rows.get_mut(l as usize)) {
+            *slot = Some(r);
+        }
+    }
+    let mut prev = 0;
+    rows.into_iter()
+        .map(|r| {
+            prev = r.unwrap_or(prev);
+            prev
+        })
+        .collect()
 }
 
 fn height_of(side: &Option<SideText>, line: Option<u32>, width: u16) -> usize {
@@ -265,31 +344,14 @@ mod tests {
         })
     }
 
-    fn row(lhs: Option<u32>, rhs: Option<u32>) -> Row {
-        Row { lhs, rhs }
+    fn lines(lines: &[&str]) -> Option<SideText> {
+        let mut side = side(lines.len())?;
+        side.lines = lines.iter().map(|l| l.to_string()).collect();
+        Some(side)
     }
 
-    #[test]
-    fn j_skips_padding_on_active_side() {
-        let diff = FileDiff {
-            lhs: side(3),
-            rhs: side(2),
-            rows: vec![
-                row(Some(0), Some(0)),
-                row(Some(1), None),
-                row(Some(2), None),
-                row(None, Some(1)),
-            ],
-            hunks: Vec::new(),
-        };
-        let mut view = FileView::new(diff);
-        assert_eq!((view.side, view.row), (Side::New, 0));
-        view.motion(Motion::Down, None, 10);
-        assert_eq!(view.row, 3);
-        view.switch(Side::Old);
-        assert_eq!(view.row, 2);
-        view.motion(Motion::Up, Some(2), 10);
-        assert_eq!(view.row, 0);
+    fn row(lhs: Option<u32>, rhs: Option<u32>) -> Row {
+        Row { lhs, rhs }
     }
 
     #[test]
@@ -324,5 +386,45 @@ mod tests {
             ]
         );
         assert!(!view.hunk(false, 1));
+    }
+
+    #[test]
+    fn screen_down_skips_row_padding_and_padding_rows() {
+        // Width 30: both text columns are 10 wide. Row 0 is 3 lines tall (old), new's line 0
+        // only 2; row 1 is padding on new.
+        let diff = FileDiff {
+            lhs: lines(&[&"a".repeat(30), "x", "y"]),
+            rhs: lines(&[&"b".repeat(20), "z"]),
+            rows: vec![
+                row(Some(0), Some(0)),
+                row(Some(1), None),
+                row(Some(2), Some(1)),
+            ],
+            hunks: Vec::new(),
+        };
+        let mut view = FileView::new(diff);
+        view.refresh_layout(30, 20, true);
+        let ctx = MotionCtx {
+            height: 20,
+            wrap: Some(view.text_width()),
+        };
+        view.cursor_motion(Motion::ScreenDown, None, &ctx);
+        assert_eq!((view.row, view.cursor.pos), (0, Pos { line: 0, col: 10 }));
+        view.cursor_motion(Motion::ScreenDown, None, &ctx);
+        assert_eq!((view.row, view.cursor.pos), (2, Pos { line: 1, col: 0 }));
+    }
+
+    #[test]
+    fn switch_lands_on_first_non_blank() {
+        let diff = FileDiff {
+            lhs: lines(&["a", "    b"]),
+            rhs: lines(&["a"]),
+            rows: vec![row(Some(0), Some(0)), row(Some(1), None)],
+            hunks: Vec::new(),
+        };
+        let mut view = FileView::new(diff);
+        view.row = 1;
+        view.switch(Side::Old);
+        assert_eq!(view.cursor.pos, Pos { line: 1, col: 4 });
     }
 }

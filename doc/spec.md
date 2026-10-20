@@ -27,7 +27,7 @@ Design principles:
 - Side-by-side, two-column, whole-file diff view with tree-sitter syntax highlighting and change backgrounds.
 - Languages: Rust, Python, C#, TypeScript (incl. TSX). Other files render as plain text.
 - Zed-format themes: bundled themes plus a user themes directory.
-- Vim-style modal navigation (row / cursor / visual / visual-line), counts, chords.
+- Vim-style modal navigation (normal / visual / visual-line), counts, chords.
 - Comment create / edit / delete, with a custom comment editor widget (insert-only in v1).
 - Comments persisted on exit to `.reviewy/comments.json` (source of truth) and `.reviewy/comments.md` (generated for the agent).
 - Configuration via `reviewy.toml` (global + project).
@@ -163,7 +163,7 @@ src/
   app.rs               App struct; declares submodules
   app/
     state.rs           Mode, modal stack, pending file open
-    view.rs            FileView: per-file diff, cursor row, active/home side, scroll, row layout
+    view.rs            FileView: per-file diff, text cursor, active/home side, scroll, row layout
     actions.rs         Action enum, vim::Command → Action mapping, App::apply
     open.rs            open-file pipeline (content, limits, difft, align, highlight)
   ui.rs                declares submodules; top-level draw()
@@ -268,7 +268,7 @@ v1 has one implementation, `DifftEngine`. A `BuiltinEngine` fallback may follow 
 
 ### Invocation
 
-Environment for all difft runs: `DFT_UNSTABLE=yes`, `DFT_DISPLAY=json` (and `--display json` when calling directly).
+Environment for all difft runs: `DFT_UNSTABLE=yes`, `DFT_DISPLAY=json` (and `--display json` when calling directly), `DFT_GRAPH_LIMIT=<difft.graph_limit>` (§13).
 
 - **Tracked changes** (modified, deleted, staged-added):
   ```
@@ -285,6 +285,8 @@ Environment for all difft runs: `DFT_UNSTABLE=yes`, `DFT_DISPLAY=json` (and `--d
 If git prints nothing (exit 0), the worktree matches `HEAD` (e.g. a staged change reverted in the worktree): git never calls difft, and the result is treated as `unchanged`.
 
 Results are cached per file for the session. difft takes ~1 s on a 4000-line file with many changes; since the loop is synchronous, draw a "Diffing…" status message before invoking it.
+
+Cost scales with the size of the changed region, not the file: heavily rewritten files build a large graph, hit `DFT_GRAPH_LIMIT` and fall back to a line diff. With difft's default limit (3,000,000) a 300-line rewrite spends ~1.5 s before falling back; `difft.graph_limit = 500000` gives the same output in ~250 ms, while moderately changed files keep the structural diff.
 
 ### Difft JSON (observed shape, 0.71.0)
 
@@ -325,7 +327,7 @@ struct FileDiff {
     lhs: Option<SideText>,       // None for added/untracked
     rhs: Option<SideText>,       // None for deleted
     rows: Vec<Row>,              // aligned whole-file rows
-    hunks: Vec<RowRange>,        // for g] / g[
+    hunks: Vec<RowRange>,        // for ] / [
 }
 
 struct SideText {
@@ -390,9 +392,10 @@ Capture → theme key mapping:
 ### Themes
 
 - Format: Zed theme family JSON (`themes[]` with `name`, `appearance`, `style`, `style.syntax`).
-- Used keys (minimum): `editor.background`, `editor.foreground`, `editor.line_number`, `editor.active_line.background`, `syntax.*`, and diff colors from `version_control.added|deleted|modified`, falling back to `created|deleted|modified`.
+- Used keys (minimum): `editor.background`, `editor.foreground`, `editor.line_number`, `editor.active_line.background`, `syntax.*`, optional `players[0].selection`, and diff colors from `version_control.added|deleted|modified`, falling back to `created|deleted|modified`.
 - `#RRGGBBAA` colors are alpha-blended onto `editor.background` at load time (terminals have no alpha).
 - Changed **lines** get a low-intensity tint of the added/deleted color; changed **tokens** (difft spans) get a stronger tint. Strengths are the blend alphas `ui.tint.line` / `ui.tint.token` (§13), applied when the theme is resolved.
+- Visual selections use `players[0].selection`; without it, `editor.foreground` blended onto `editor.active_line.background` at `ui.tint.selection`.
 - `font_style: italic` and `font_weight >= 700` map to italic/bold modifiers.
 - Color depth: 24-bit truecolor only. No 256-color fallback is planned.
 
@@ -429,9 +432,10 @@ Bundled: `src/defaults/tokyo-night.json`, compiled in via `include_str!` in `src
 - Two equal columns: old (left), new (right). Added files show an empty left column; deleted files an empty right column.
 - Gutter per column: line number, change marker (`+` / `-` / `~`), comment marker (e.g. `●`) on the side the comment was made on.
 - Active column is indicated (e.g. brighter gutter / border).
-- Current line in row mode: `active_line` background on the active column.
-- On first open, the cursor is on the first hunk (as `g]` from the top; a file starting with a pure deletion opens on the old column). Reopening a file restores its cursor and scroll.
-- **Wrapping** (default on, `wrap` in config): each aligned row's height is the max of both sides' wrapped heights; the shorter side is padded. With `wrap = false`, lines are clipped and the view scrolls horizontally to follow the cursor.
+- Cursor line: `active_line` background on the active column; the text cursor is a reversed cell; visual selections use the selection color (§9), drawn over all other backgrounds.
+- On first open, the cursor is on the first non-blank char of the first hunk (as `]` from the top; a file starting with a pure deletion opens on the old column). Reopening a file restores its cursor and scroll.
+- Vertical scroll is per screen line, so a wrapped row taller than the viewport scrolls by segment.
+- **Wrapping** (default on, `wrap` in config): each aligned row's height is the max of both sides' wrapped heights; the shorter side is padded. With `wrap = false`, lines are clipped and both columns scroll horizontally together to keep the text cursor visible.
 - Wrapping width uses `unicode-width`; layout is computed by `vim/wrap.rs`.
 
 ### Status line
@@ -467,66 +471,56 @@ For "Load existing", a discarded set is only dropped from memory; the files are 
 ### Mode hierarchy (diff view)
 
 ```
-Row ──Enter──▶ Cursor ──v / V──▶ Visual / VisualLine
- ▲               │  ▲                 │
- └──────Esc──────┘  └──────Esc────────┘
-Row ──Esc──▶ Explorer overlay
+Normal ──v / V──▶ Visual / VisualLine
+  ▲                     │
+  └────────Esc──────────┘
+Normal ──Esc──▶ Explorer overlay
 ```
 
 `Esc` always steps back one level. `Ctrl-q` (quit) works everywhere. `Ctrl-c` does nothing.
 
-### Row mode
+### Normal mode
 
-The cursor is a whole line on the active column. Rows where the active side has no line (padding) are skipped.
-
-| Key | Action |
-|---|---|
-| `h` / `l` | Switch active column (left/right); jump to nearest row with a line on that side |
-| `j` / `k` | Next/previous logical line |
-| arrows | Aliases for `h` `j` `k` `l` (row and cursor modes) |
-| `gg` / `G` | First/last line |
-| `Ctrl-d` / `Ctrl-u` | Half page down/up |
-| `g]` / `g[` | Next/previous hunk: first changed line of the hunk on the home side (last chosen with `h`/`l`); if the hunk changes only the other side (pure addition/deletion), switch to it |
-| `gn` / `gp` | Next/previous file (explorer order) |
-| Enter | Commented line → edit comment; otherwise → Cursor mode at column 0 of the line |
-| `D` | Delete comment on line (confirmation) |
-| Esc | Open explorer overlay |
-
-### Cursor mode
-
-A text cursor on the active side. Cannot leave the column.
+A text cursor on the active column (`active_line` background on its line). It cannot leave the column except through column switches. Padding rows are skipped: motions work on the active side's lines.
 
 | Key | Action |
 |---|---|
 | `h` / `l` | Left/right by char |
 | `j` / `k` | Down/up by **screen row** (vim `gj`/`gk` semantics under wrap) |
+| arrows | Aliases for `h` `j` `k` `l` |
 | `w` / `b` / `e` | Vim lowercase-word motions |
 | `0` / `$` | Line start/end |
-| `gg` / `G`, `Ctrl-d` / `Ctrl-u`, `g]` / `g[`, `gn` / `gp` | As row mode |
+| `gg` / `G` | First/last line (`5G`: line 5), first non-blank char |
+| `Ctrl-d` / `Ctrl-u` | Half page down/up, keeping the column |
+| `Ctrl-h` / `Ctrl-l` (`Ctrl-Left` / `Ctrl-Right`) | Switch to the old/new column: nearest line there, first non-blank char |
+| `]` / `[` | Next/previous hunk: first changed line of the hunk on the home side (last chosen with `Ctrl-h`/`Ctrl-l`); if the hunk changes only the other side (pure addition/deletion), switch to it. Lands on the first non-blank char |
+| `gn` / `gp` | Next/previous file (explorer order) |
 | `v` | Visual (charwise) |
 | `V` | Visual line |
-| Enter | Create comment on the cursor line (no prefill) |
-| Esc | Row mode |
+| Enter | Commented line → edit comment; otherwise → create a comment on the cursor line (empty body) |
+| `D` | Delete comment on line (confirmation) |
+| Esc | Open explorer overlay |
 
 ### Visual / VisualLine
 
-All cursor-mode motions extend the selection. Selections cannot cross columns.
+All normal-mode motions extend the selection. Selections cannot cross columns: `Ctrl-h`/`Ctrl-l` and `]`/`[` first leave visual mode, then act as in Normal mode. `gn`/`gp` open the other file in Normal mode.
 
 | Key | Action |
 |---|---|
+| `v` / `V` | As vim: the same key again → Normal; the other key switches between charwise and linewise, keeping the anchor |
 | Enter | Create comment on the selection; prefill the editor with the selection as a fenced code block |
-| Esc | Cursor mode |
+| Esc | Normal mode |
 
 ### Examples
 
-- `Enter Enter` → comment on current line, empty box.
-- `Enter V Enter` → comment on current line, line pasted (fenced) into box.
-- `Enter w w v w Enter` → comment on the third word, that word pasted (fenced) into box.
+- `Enter` → comment on current line, empty box.
+- `V Enter` → comment on current line, line pasted (fenced) into box.
+- `w w v w Enter` → charwise comment from the cursor's word to the first char of the word after (vim `v w` semantics), pasted (fenced) into box.
 
 ### Vim engine (`src/vim/`)
 
-- `keys.rs`: stateful parser over key events. Accumulates an optional count and multi-key chords (`gg`, `g]`, `gn`, …) and emits `vim::Input { command: Command, count: Option<usize> }` (`Command`: motion, mode switches, operators such as "comment" / "delete comment"; `count` is `None` when none was typed, so `G` ≠ `1G`). No chord timeout; Esc clears pending input. Counts are supported (`5j`, `3w`). One key table for all modes; keys map to `Command`s through it so configurable bindings (v1.1+) are a table swap. Arrow keys alias `hjkl`.
-- `vim/` has no dependency on `app/`. The app maps `vim::Command` → `app::Action` in `app/actions.rs` (context-dependent, e.g. Enter in row mode → edit comment or enter cursor mode). The comment editor (v1.1 modal editing) consumes the same `Command`s with its own mapping.
+- `keys.rs`: stateful parser over key events. Accumulates an optional count and multi-key chords (`gg`, `gn`, `gp`) and emits `vim::Input { command: Command, count: Option<usize> }` (`Command`: motion, mode switches, operators such as "comment" / "delete comment"; `count` is `None` when none was typed, so `G` ≠ `1G`). No chord timeout; Esc clears pending input. Counts are supported (`5j`, `3w`). One key table for all modes; keys map to `Command`s through it so configurable bindings (v1.1+) are a table swap. Arrow keys alias `hjkl`; Ctrl-Left/Ctrl-Right alias Ctrl-h/Ctrl-l. Ctrl-h is its own key (crossterm reports `0x08` as Ctrl+`h`, `0x7F` as Backspace), never Backspace.
+- `vim/` has no dependency on `app/`. The app maps `vim::Command` → `app::Action` in `app/actions.rs` (context-dependent, e.g. Enter in Normal mode → edit the line's comment or create one). The comment editor (v1.1 modal editing) consumes the same `Command`s with its own mapping.
 - `motion.rs`: `Motion` enum (`Left`, `Right`, `Down`, `Up`, `ScreenDown`, `ScreenUp`, `WordForward`, `WordBackward`, `WordEnd`, `LineStart`, `LineEnd`, `FileStart`, `FileEnd`, `HalfPageDown`, `HalfPageUp`, …) applied over:
   ```rust
   trait TextView {
@@ -562,7 +556,7 @@ struct Anchor { file: PathBuf, side: Side, selection: Selection }  // file: repo
 enum Side { Old, New }       // Old = HEAD, New = working tree
 
 enum Selection {             // 1-based, inclusive; cols in chars
-    Line { line: u32 },                  // row / cursor-mode comment (the default)
+    Line { line: u32 },                  // normal-mode comment on the cursor line (the default)
     Lines { start: u32, end: u32 },      // V mode, start < end
     Chars { start: Pos, end: Pos },      // v mode, start <= end; start.col may exceed end.col across lines
 }
@@ -581,9 +575,9 @@ struct Excerpt { start: u32, lines: Vec<String> }  // contiguous lines from `sta
 
 ### Lifecycle
 
-- **Create:** Enter in Cursor/Visual/VisualLine mode. Visual modes prefill the body with the selection in a fenced block tagged with the file's language; the fence is longer than any backtick run in the selection. Cursor is placed on a new line below the fence. Cursor-mode Enter starts empty.
-- **Edit:** Row-mode Enter on a commented line.
-- **Delete:** `D` in row mode (confirmation), or closing the editor with an empty body.
+- **Create:** Enter in Normal mode on an uncommented line (starts empty), or Enter in Visual/VisualLine mode. Visual modes prefill the body with the selection in a fenced block tagged with the file's language; the fence is longer than any backtick run in the selection. Cursor is placed on a new line below the fence.
+- **Edit:** Normal-mode Enter on a commented line.
+- **Delete:** `D` in Normal mode (confirmation), or closing the editor with an empty body.
 
 ### Persistence
 
@@ -685,6 +679,7 @@ tab_width = 4
 [ui.tint]                            # 0-1: added/deleted color blended onto the background
 line = 0.02                          # changed lines
 token = 0.10                         # changed tokens
+selection = 0.15                     # selection fallback: foreground onto the active line (themes without players[0].selection)
 
 [limits]
 max_lines = 5000
@@ -702,6 +697,7 @@ context_lines = 3
 
 [difft]
 # binary = "difft"           # override difft path
+graph_limit = 500000         # DFT_GRAPH_LIMIT: vertices before difft falls back to a line diff (difft default 3000000)
 ```
 
 ## 14. Errors, signals, logging

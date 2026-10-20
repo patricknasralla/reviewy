@@ -58,8 +58,10 @@ fn centered(area: Rect, width: u16, height: u16) -> Rect {
 mod tests {
     use std::path::PathBuf;
 
+    use crossterm::event::{KeyCode, KeyEvent};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+    use ratatui::style::Modifier;
 
     use super::*;
     use crate::app::state::{Modal, PendingOpen};
@@ -155,6 +157,25 @@ mod tests {
         );
         open(&mut app, r#"{"status":"created"}"#, None, Some(NEW));
         insta::assert_snapshot!(render(&app));
+    }
+
+    #[test]
+    fn charwise_selection_over_two_lines() {
+        let mut app = app(vec![file("src/main.rs", FileStatus::Modified, false)], true);
+        open(&mut app, MODIFIED, Some(OLD), Some(NEW));
+        // Opens on `let` of new line 2; select to the end of `let` on line 3.
+        for c in ['v', 'j', 'e'] {
+            app.handle_key(KeyEvent::from(KeyCode::Char(c)));
+        }
+        let backend = render(&app);
+        // Right text column starts at 40 + gutter 5; new lines 2 and 3 are on screen lines 1, 2.
+        let buf = backend.buffer();
+        assert_eq!(buf[(49, 1)].bg, app.theme.selection);
+        assert_eq!(buf[(45, 2)].bg, app.theme.selection);
+        assert_eq!(buf[(51, 2)].bg, app.theme.selection);
+        assert_ne!(buf[(52, 2)].bg, app.theme.selection);
+        assert!(buf[(51, 2)].modifier.contains(Modifier::REVERSED));
+        insta::assert_snapshot!(backend);
     }
 
     #[test]

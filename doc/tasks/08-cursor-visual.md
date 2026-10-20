@@ -43,4 +43,34 @@ From task 07 (see its handoff notes): per-file state is `app::view::FileView` (`
 
 ## Handoff notes
 
-_To be filled in by the implementing agent._
+### Public interfaces
+
+- `app::state::Mode::{Explorer, Normal, Visual { anchor: vim::motion::Pos }, VisualLine { anchor }}` (`Copy`). Row and Cursor modes no longer exist (see below).
+- `app::view::FileView` gained `pub cursor: vim::motion::Cursor` (always valid when the side has lines), `pub hscroll: usize` (display cols, shared by both columns), private `row_of` (line → row per side). `scroll` is now a **screen line**. Methods: `text(Side) -> Option<&SideText>`, `text_width() -> u16` (active column), `cursor_motion(Motion, Option<usize>, &MotionCtx)`, `switch(Side)` and `hunk(next, count) -> bool` (both land on the first non-blank char), `refresh_layout(width, height, wrap)` (keeps the text cursor's screen line, and its column when not wrapping, visible). Row-mode `motion` removed.
+- `app::actions::Action::{ModalConfirm, ModalCancel, ExplorerMove, ExplorerOpen, ExplorerClose, Move(Motion, Option<usize>), Switch(Side), Hunk { next, count }, File { next }, ToExplorer, ToNormal, Visual { line: bool }, Comment, DeleteComment, Quit}`. Private `fn anchor(mode, &FileView, file: &Path) -> Option<Anchor>` builds the comment target (`None` in the explorer or when the side has no lines); `App::comment()` currently shows it as `Comment target: <old|new> <Selection>` and returns to Normal (`// task 09: open the comment editor`).
+- `impl vim::motion::TextView for diff::model::SideText`.
+- `vim::keys::Command` gained `ColumnLeft`, `ColumnRight`; `Key::CtrlCode(KeyCode)` matches Ctrl + non-char keys. `vim::motion::first_non_blank` and `vim::wrap::char_width` are `pub`.
+- `highlight::theme::Theme::selection: Color`; `Tint` gained `selection: f32`.
+- `config::DifftConfig::graph_limit: usize`; `diff::difft::DifftEngine { binary, graph_limit }`.
+
+### Decisions and deviations (developer decisions; spec §7, §9, §10, §11, §12, §13 updated)
+
+- **Row and Cursor modes merged into Normal** after functional testing: the diff view always has a text cursor. `h`/`l` move by char, `j`/`k` by screen row; **Ctrl-h/Ctrl-l** (aliases Ctrl-Left/Ctrl-Right) switch columns. Enter in Normal targets the cursor line (`Selection::Line`); `D` works in Normal only. Esc: visual → Normal → explorer.
+- **Ctrl-h is never Backspace**: crossterm reports `0x08` as Ctrl+`h` and `0x7F` as Backspace; terminals sending `^H` for Backspace are not supported. Applies to the comment editor too.
+- **`[`/`]` replace `g[`/`g]`** (counts work: `3]`).
+- **`v`/`V` toggle as vim**: same key → Normal; other key switches kind, keeping the anchor. In visual, `Ctrl-h/l` and `[`/`]` leave visual first, then act as in Normal (selections never cross columns).
+- **Jumps land on the first non-blank char**: file open (first hunk), hunk jumps, column switches. `want` is then the line display col (not segment-relative; differs only when indentation exceeds the column width; accepted). `Ctrl-d`/`Ctrl-u` keep the column; `gg`/`G` as vim.
+- **All motions go through `motion::apply`**, including `gg`/`G`/`Ctrl-d`/`Ctrl-u`: on the active side's lines they match the old row-mode results. Padding needs no code: `apply` works in side-line space; screen motions use the active column's text width.
+- **Scroll refactor** (task 07 module change): `FileView::scroll` is a screen line; `draw` starts mid-row (gutter hidden on clipped rows). Fixes task 07's "tall row clipped at the bottom". Scrolling up with the margin may show the bottom part of the row above.
+- **Horizontal scroll** (wrap off): one `hscroll` for both columns, kept visible for the active column's text width; a wide char straddling the left edge is skipped.
+- **Selection colour**: `players[0].selection` (blended onto the background), else `foreground` blended onto `active_line_background` at `[ui.tint] selection = 0.15`. Selection overrides line/token/cursor-line backgrounds; an empty selected line shows one selected cell; the cursor is a `REVERSED` cell.
+- **difft speed**: difft's cost scales with the changed region; heavily rewritten files hit `DFT_GRAPH_LIMIT` (default 3M) after ~1.5 s and fall back to a line diff. New `[difft] graph_limit = 500000`, passed as `DFT_GRAPH_LIMIT`: same output in ~250 ms on this repo's 300-line rewrites; moderately changed files keep the structural diff (200k already changed output for some).
+- **Examples**: `w w v w` selects vim-style (`v w` includes the first char of the next word); spec §11 wording updated.
+- Status line: `NORMAL` / `VISUAL` / `V-LINE`, `line:col` of the text cursor (1-based char col; `0:0` when the side has no lines).
+- Extra test beyond the list: `switch_lands_on_first_non_blank`; key parser test for Ctrl-h/Ctrl-Left. Row-mode test `j_skips_padding_on_active_side` removed with row motions.
+- Manual check (scratch repo, GNU screen): the three §11 examples, toggles, Esc chain, Ctrl-h/l and Ctrl-arrows (target side and first non-blank), visual leaving on column/hunk jumps, `]`/`[`, wrap-off horizontal scroll.
+
+### Left undone / flagged
+
+- Selection and cursor colours are only checked by cell asserts (snapshots are text-only) and the developer's manual testing.
+- Selection cols are in tab-expanded space (task 11 tabs follow-up; the caller to change is `anchor` in `app/actions.rs`).

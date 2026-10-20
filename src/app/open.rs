@@ -67,7 +67,7 @@ impl App {
     fn show(&mut self, index: usize) {
         self.current = Some(index);
         self.explorer = index;
-        self.mode = Mode::Row;
+        self.mode = Mode::Normal;
         self.refresh_layout();
     }
 }

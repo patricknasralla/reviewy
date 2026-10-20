@@ -5,10 +5,12 @@ use std::ops::Range;
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use crate::app::App;
+use crate::app::state::Mode;
+use crate::app::view::FileView;
 use crate::comments::model::Side;
 use crate::diff::model::{FileDiff, LineKind, SideText};
 use crate::highlight::Theme;
@@ -38,7 +40,7 @@ pub fn columns(diff: &FileDiff, width: u16) -> [Column; 2] {
     [column(&diff.lhs, left), column(&diff.rhs, width - left)]
 }
 
-/// Draws visible rows only, from the view's scroll row down to the bottom of `area`.
+/// Draws visible rows only, from the view's scroll line down to the bottom of `area`.
 pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
     let Some(view) = app.view() else { return };
     let diff = &view.diff;
@@ -46,44 +48,96 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
     let cols = columns(diff, area.width);
     let xs = [area.x, area.x + area.width / 2];
     let buf = frame.buffer_mut();
+    let first = tops.partition_point(|&t| t <= view.scroll) - 1;
+    let mut skip = view.scroll - tops[first];
     let mut y = area.y;
-    for r in view.scroll..diff.rows.len() {
+    for r in first..diff.rows.len() {
         if y >= area.bottom() {
             break;
         }
-        let height = (tops[r + 1] - tops[r]).min(usize::from(area.bottom() - y)) as u16;
+        let height = (tops[r + 1] - tops[r] - skip).min(usize::from(area.bottom() - y)) as u16;
         for (i, side) in [Side::Old, Side::New].into_iter().enumerate() {
             let rect = Rect::new(xs[i], y, cols[i].gutter + cols[i].text, height);
-            let text = match side {
-                Side::Old => diff.lhs.as_ref(),
-                Side::New => diff.rhs.as_ref(),
-            };
+            let active = view.side == side;
             let cell = Cell {
                 theme: &app.theme,
                 wrap: app.config.ui.wrap,
+                hscroll: view.hscroll,
+                skip,
                 side,
-                active: view.side == side,
-                cursor: view.side == side && view.row == r,
+                active,
+                cursor: active && view.row == r,
             };
-            if let Some((text, line)) = text.zip(view.line(r, side)) {
-                cell.draw(buf, rect, cols[i], text, line as usize);
+            if let Some((text, line)) = view.text(side).zip(view.line(r, side)) {
+                let line = line as usize;
+                let marks = if active {
+                    marks(app.mode, view, line)
+                } else {
+                    Marks::default()
+                };
+                cell.draw(buf, rect, cols[i], text, line, marks);
             }
         }
         y += height;
+        skip = 0;
+    }
+}
+
+/// Text cursor and selection on one line, in chars.
+#[derive(Default)]
+struct Marks {
+    /// Half-open; may extend past the line end.
+    selection: Option<Range<usize>>,
+    cursor: Option<usize>,
+}
+
+fn marks(mode: Mode, view: &FileView, line: usize) -> Marks {
+    let cur = view.cursor.pos;
+    let selection = match mode {
+        Mode::Visual { anchor } => {
+            let (a, b) = ((anchor.line, anchor.col), (cur.line, cur.col));
+            let (start, end) = (a.min(b), a.max(b));
+            (start.0..=end.0).contains(&line).then(|| {
+                let from = if line == start.0 { start.1 } else { 0 };
+                let to = if line == end.0 { end.1 + 1 } else { usize::MAX };
+                from..to
+            })
+        }
+        Mode::VisualLine { anchor } => {
+            let lines = anchor.line.min(cur.line)..=anchor.line.max(cur.line);
+            lines.contains(&line).then_some(0..usize::MAX)
+        }
+        _ => None,
+    };
+    Marks {
+        selection,
+        cursor: (cur.line == line).then_some(cur.col),
     }
 }
 
 struct Cell<'a> {
     theme: &'a Theme,
     wrap: bool,
+    hscroll: usize,
+    /// Leading screen lines of the row scrolled out of view.
+    skip: usize,
     side: Side,
     active: bool,
+    /// Cursor row on the active side.
     cursor: bool,
 }
 
 impl Cell<'_> {
     /// Line `i` of one side: gutter on the first screen line, wrapped segments below it.
-    fn draw(&self, buf: &mut Buffer, rect: Rect, col: Column, text: &SideText, i: usize) {
+    fn draw(
+        &self,
+        buf: &mut Buffer,
+        rect: Rect,
+        col: Column,
+        text: &SideText,
+        i: usize,
+        marks: Marks,
+    ) {
         let theme = self.theme;
         let kind = text.kinds[i];
         let (line_tint, token_tint) = match self.side {
@@ -104,48 +158,101 @@ impl Cell<'_> {
         };
         buf.set_style(text_rect, Style::new().bg(bg));
 
-        let (marker, marker_fg) = match kind {
-            LineKind::Unchanged => (' ', theme.foreground),
-            LineKind::Changed => ('~', theme.modified),
-            LineKind::Added => ('+', theme.added),
-            LineKind::Removed => ('-', theme.deleted),
-        };
-        let number_fg = if self.active {
-            theme.foreground
-        } else {
-            theme.line_number
-        };
-        let digits = usize::from(col.gutter.saturating_sub(GUTTER_EXTRA));
-        let gutter = Line::from(vec![
-            Span::styled(format!(" {:>digits$}", i + 1), Style::new().fg(number_fg)),
-            Span::styled(marker.to_string(), Style::new().fg(marker_fg)),
-            Span::raw("  "),
-        ]);
-        buf.set_line(rect.x, rect.y, &gutter, col.gutter);
+        if self.skip == 0 {
+            let (marker, marker_fg) = match kind {
+                LineKind::Unchanged => (' ', theme.foreground),
+                LineKind::Changed => ('~', theme.modified),
+                LineKind::Added => ('+', theme.added),
+                LineKind::Removed => ('-', theme.deleted),
+            };
+            let number_fg = if self.active {
+                theme.foreground
+            } else {
+                theme.line_number
+            };
+            let digits = usize::from(col.gutter.saturating_sub(GUTTER_EXTRA));
+            let gutter = Line::from(vec![
+                Span::styled(format!(" {:>digits$}", i + 1), Style::new().fg(number_fg)),
+                Span::styled(marker.to_string(), Style::new().fg(marker_fg)),
+                Span::raw("  "),
+            ]);
+            buf.set_line(rect.x, rect.y, &gutter, col.gutter);
+        }
 
         let line = &text.lines[i];
+        let byte = |c: usize| line.char_indices().nth(c).map_or(line.len(), |(b, _)| b);
+        let selection = marks.selection.map(|r| byte(r.start)..byte(r.end));
         let segments = if self.wrap {
             wrap::wrap_line(line, col.text)
         } else {
-            std::iter::once(0..line.len()).collect()
+            std::iter::once(clip_start(line, self.hscroll)..line.len()).collect()
         };
         let base = Style::new().fg(theme.foreground).bg(bg);
-        for (k, seg) in segments
-            .into_iter()
-            .take(usize::from(rect.height))
-            .enumerate()
-        {
+        let selected = Style::new().bg(theme.selection);
+        let visible = self.skip..self.skip + usize::from(rect.height);
+        for (k, seg) in segments.iter().enumerate() {
+            if !visible.contains(&k) {
+                continue;
+            }
+            let y = rect.y + (k - self.skip) as u16;
             let spans = spans(
                 line,
-                seg,
+                seg.clone(),
                 &text.highlights[i],
                 &text.changes[i],
                 base,
                 token_tint,
             );
-            buf.set_line(text_rect.x, rect.y + k as u16, &Line::from(spans), col.text);
+            buf.set_line(text_rect.x, y, &Line::from(spans), col.text);
+            if let Some(sel) = &selection {
+                let (from, to) = (sel.start.max(seg.start), sel.end.min(seg.end));
+                // An empty selected line still shows one selected cell.
+                let cells = if line.is_empty() {
+                    0..1
+                } else if from < to {
+                    let x = width(&line[seg.start..from]);
+                    x..x + width(&line[from..to])
+                } else {
+                    continue;
+                };
+                let cells = cells.start.min(col.text)..cells.end.min(col.text);
+                let rect = Rect::new(text_rect.x + cells.start, y, cells.len() as u16, 1);
+                buf.set_style(rect, selected);
+            }
+        }
+
+        if let Some(c) = marks.cursor {
+            let (seg, x) = if self.wrap {
+                wrap::to_screen(line, col.text, c)
+            } else {
+                let start = clip_start(line, self.hscroll);
+                (
+                    0,
+                    wrap::display_col(line, c) - width(&line[..start]) as usize,
+                )
+            };
+            if visible.contains(&seg) && x < usize::from(col.text) {
+                let pos = (text_rect.x + x as u16, rect.y + (seg - self.skip) as u16);
+                buf[pos].set_style(Style::new().add_modifier(Modifier::REVERSED));
+            }
         }
     }
+}
+
+/// Byte where the first char at display column `hscroll` or later starts.
+fn clip_start(line: &str, hscroll: usize) -> usize {
+    let mut x = 0;
+    for (i, c) in line.char_indices() {
+        if x >= hscroll {
+            return i;
+        }
+        x += wrap::char_width(c);
+    }
+    line.len()
+}
+
+fn width(s: &str) -> u16 {
+    s.chars().map(wrap::char_width).sum::<usize>() as u16
 }
 
 /// Splits `line[seg]` at highlight and change boundaries; changes override the background.

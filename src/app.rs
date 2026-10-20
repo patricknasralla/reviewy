@@ -64,6 +64,7 @@ impl App {
         Self {
             engine: Box::new(DifftEngine {
                 binary: config.difft.binary.clone(),
+                graph_limit: config.difft.graph_limit,
             }),
             config,
             highlighter: Highlighter::new(&theme),

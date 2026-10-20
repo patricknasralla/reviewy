@@ -12,6 +12,8 @@ pub enum Command {
     Visual,
     VisualLine,
     DeleteComment,
+    ColumnLeft,
+    ColumnRight,
     NextHunk,
     PrevHunk,
     NextFile,
@@ -32,6 +34,8 @@ enum Key {
     Char(char),
     Ctrl(char),
     Code(KeyCode),
+    /// Ctrl + a non-char key, e.g. Ctrl-Left.
+    CtrlCode(KeyCode),
 }
 
 const MAX_COUNT: usize = 99_999;
@@ -54,6 +58,12 @@ const KEYS: &[(Key, Command)] = &[
     (Key::Char('G'), Command::Motion(Motion::FileEnd)),
     (Key::Ctrl('d'), Command::Motion(Motion::HalfPageDown)),
     (Key::Ctrl('u'), Command::Motion(Motion::HalfPageUp)),
+    (Key::Ctrl('h'), Command::ColumnLeft),
+    (Key::Ctrl('l'), Command::ColumnRight),
+    (Key::CtrlCode(KeyCode::Left), Command::ColumnLeft),
+    (Key::CtrlCode(KeyCode::Right), Command::ColumnRight),
+    (Key::Char(']'), Command::NextHunk),
+    (Key::Char('['), Command::PrevHunk),
     (Key::Char('v'), Command::Visual),
     (Key::Char('V'), Command::VisualLine),
     (Key::Char('D'), Command::DeleteComment),
@@ -65,8 +75,6 @@ const KEYS: &[(Key, Command)] = &[
 /// Second key of `g` chords.
 const G_KEYS: &[(char, Command)] = &[
     ('g', Command::Motion(Motion::FileStart)),
-    (']', Command::NextHunk),
-    ('[', Command::PrevHunk),
     ('n', Command::NextFile),
     ('p', Command::PrevFile),
 ];
@@ -85,6 +93,7 @@ impl KeyParser {
         let key = match event.code {
             KeyCode::Char(c) if event.modifiers.contains(KeyModifiers::CONTROL) => Key::Ctrl(c),
             KeyCode::Char(c) => Key::Char(c),
+            code if event.modifiers.contains(KeyModifiers::CONTROL) => Key::CtrlCode(code),
             code => Key::Code(code),
         };
         let command = KEYS.iter().find(|(k, _)| *k == key).map(|&(_, c)| c);
@@ -180,12 +189,21 @@ mod tests {
             feed(&mut p, "gg"),
             [input(Command::Motion(Motion::FileStart), None)]
         );
-        assert_eq!(feed(&mut p, "3g]"), [input(Command::NextHunk, Some(3))]);
+        assert_eq!(feed(&mut p, "3]"), [input(Command::NextHunk, Some(3))]);
         // Unknown second key cancels the chord and the count.
         assert_eq!(
             feed(&mut p, "5gxj"),
             [input(Command::Motion(Motion::Down), None)]
         );
+    }
+
+    #[test]
+    fn ctrl_h_and_ctrl_left_switch_column() {
+        let mut p = KeyParser::default();
+        for code in [KeyCode::Char('h'), KeyCode::Left] {
+            let event = KeyEvent::new(code, KeyModifiers::CONTROL);
+            assert_eq!(p.handle(event), Some(input(Command::ColumnLeft, None)));
+        }
     }
 
     #[test]

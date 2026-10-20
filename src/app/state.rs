@@ -1,11 +1,15 @@
 //! Mode, modal stack and pending file open.
 
 use crate::git::{FileContent, FileInfo};
+use crate::vim::motion::Pos;
 
+/// Visual modes store where the selection started.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Explorer,
-    Row,
+    Normal,
+    Visual { anchor: Pos },
+    VisualLine { anchor: Pos },
 }
 
 pub enum Modal {

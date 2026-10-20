@@ -61,6 +61,8 @@ pub struct Change {
 
 pub struct DifftEngine {
     pub binary: PathBuf,
+    /// `DFT_GRAPH_LIMIT`.
+    pub graph_limit: usize,
 }
 
 impl DiffEngine for DifftEngine {
@@ -86,7 +88,11 @@ impl DiffEngine for DifftEngine {
                 .env("DFT_DISPLAY", "json");
             cmd
         };
-        let out = cmd.current_dir(root).env("DFT_UNSTABLE", "yes").output()?;
+        let out = cmd
+            .current_dir(root)
+            .env("DFT_UNSTABLE", "yes")
+            .env("DFT_GRAPH_LIMIT", self.graph_limit.to_string())
+            .output()?;
         if !out.status.success() {
             let args: Vec<_> = std::iter::once(cmd.get_program())
                 .chain(cmd.get_args())

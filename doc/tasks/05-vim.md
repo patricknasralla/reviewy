@@ -94,3 +94,7 @@ impl KeyParser {
 ### Left undone
 
 - Nothing in `vim/` implements `TextView` outside tests; tasks 08 (diff side) and 09 (editor buffer) do.
+
+### Changed by task 08
+
+- `g]`/`g[` replaced by `]`/`[` in `KEYS`; `Command::{ColumnLeft, ColumnRight}` bound to Ctrl-h/Ctrl-l and Ctrl-Left/Ctrl-Right via a new `Key::CtrlCode(KeyCode)`. `motion::first_non_blank` and `wrap::char_width` made `pub`.

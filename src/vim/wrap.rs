@@ -4,7 +4,7 @@ use std::ops::Range;
 
 use unicode_width::UnicodeWidthChar;
 
-fn char_width(c: char) -> usize {
+pub fn char_width(c: char) -> usize {
     c.width().unwrap_or(0)
 }
 

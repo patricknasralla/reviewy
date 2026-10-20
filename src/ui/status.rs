@@ -12,7 +12,9 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let mode = match app.mode {
         Mode::Explorer => "EXPLORER",
-        Mode::Row => "ROW",
+        Mode::Normal => "NORMAL",
+        Mode::Visual { .. } => "VISUAL",
+        Mode::VisualLine { .. } => "V-LINE",
     };
     let mut spans = vec![Span::styled(
         format!(" {mode} "),
@@ -22,9 +24,10 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
             .add_modifier(Modifier::BOLD),
     )];
     if let (Some(file), Some(view)) = (app.current_file(), app.view()) {
+        let p = view.cursor.pos;
         let pos = view
             .cursor_line()
-            .map_or("0:0".into(), |l| format!("{}:1", l + 1));
+            .map_or("0:0".into(), |_| format!("{}:{}", p.line + 1, p.col + 1));
         spans.push(Span::raw(format!(" {}  {pos}", file.path.display())));
     }
     let pending = app.keys.pending();

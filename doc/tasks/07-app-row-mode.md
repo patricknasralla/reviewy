@@ -101,3 +101,7 @@ One unit test for row-mode `j` skipping padding rows on the active side.
 - **Tall rows:** scroll is row-granular; a wrapped row taller than the viewport is clipped at the bottom (task 08 updated).
 - After the terminal grows, the view may leave empty lines below the last row until the next move.
 - Manual check (scratch repo, GNU screen): explorer, open, all row keys, large-file modal, unviewable messages, quit modal verified. Resize and colors not verifiable there (snapshots are text-only); colors checked by the developer.
+
+### Changed by task 08
+
+- Row mode no longer exists: task 08 merged it with cursor mode into `Mode::Normal` (text cursor always present; Ctrl-h/Ctrl-l switch columns; `]`/`[` for hunks). `FileView::motion` and its row helpers were removed; `FileView::scroll` is now a screen line (fixes "tall rows" above). See task 08's handoff notes.

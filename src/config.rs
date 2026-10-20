@@ -60,6 +60,7 @@ pub struct CommentsConfig {
 #[serde(deny_unknown_fields)]
 pub struct DifftConfig {
     pub binary: PathBuf,
+    pub graph_limit: usize,
 }
 
 /// Defaults, then the global XDG config, then `<repo_root>/.reviewy/reviewy.toml`.

@@ -19,6 +19,9 @@ pub struct Tint {
     pub line: f32,
     /// Changed tokens.
     pub token: f32,
+    /// Selection fallback when the theme has no `players[0].selection`: `foreground` blended
+    /// onto `active_line_background`.
+    pub selection: f32,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -54,6 +57,8 @@ pub struct Theme {
     pub foreground: Color,
     pub line_number: Color,
     pub active_line_background: Color,
+    /// Visual-mode selection background (`players[0].selection`).
+    pub selection: Color,
     pub added: Color,
     pub deleted: Color,
     pub modified: Color,
@@ -178,6 +183,12 @@ impl Variant {
             blended(key, value)
         };
 
+        let foreground = color(&["editor.foreground"])?;
+        let active_line = color(&["editor.active_line.background"])?;
+        let selection = match self.selection() {
+            Some(value) => blended("players[0].selection", value)?,
+            None => blend(foreground, active_line, tint.selection),
+        };
         let added = color(&["version_control.added", "created"])?;
         let deleted = color(&["version_control.deleted", "deleted"])?;
         let syntax = self
@@ -202,9 +213,10 @@ impl Variant {
         Ok(Theme {
             name: self.name.clone(),
             background: rgb(bg),
-            foreground: rgb(color(&["editor.foreground"])?),
+            foreground: rgb(foreground),
             line_number: rgb(color(&["editor.line_number"])?),
-            active_line_background: rgb(color(&["editor.active_line.background"])?),
+            active_line_background: rgb(active_line),
+            selection: rgb(selection),
             added: rgb(added),
             deleted: rgb(deleted),
             modified: rgb(color(&["version_control.modified", "modified"])?),
@@ -215,6 +227,15 @@ impl Variant {
             token_deleted_bg: rgb(blend(deleted, bg, tint.token)),
             syntax,
         })
+    }
+
+    fn selection(&self) -> Option<&str> {
+        self.style
+            .colors
+            .get("players")?
+            .get(0)?
+            .get("selection")?
+            .as_str()
     }
 
     /// First of `keys` with a non-null value, so `version_control.*` can fall back.
@@ -256,6 +277,7 @@ mod tests {
     const TINT: Tint = Tint {
         line: 0.1,
         token: 0.2,
+        selection: 0.15,
     };
 
     #[test]

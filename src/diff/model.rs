@@ -3,6 +3,7 @@
 use std::ops::Range;
 
 use crate::highlight::highlighter::StyledSpan;
+use crate::vim::motion::TextView;
 
 /// Whole-file, row-aligned diff of one file.
 #[derive(Debug)]
@@ -24,6 +25,16 @@ pub struct SideText {
     /// Changed-token byte ranges into `lines[i]`.
     pub changes: Vec<Vec<Range<usize>>>,
     pub highlights: Vec<Vec<StyledSpan>>,
+}
+
+impl TextView for SideText {
+    fn line_count(&self) -> usize {
+        self.lines.len()
+    }
+
+    fn line(&self, idx: usize) -> &str {
+        &self.lines[idx]
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
