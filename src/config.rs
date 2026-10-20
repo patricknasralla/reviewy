@@ -53,7 +53,7 @@ pub struct IgnoreConfig {
 #[allow(dead_code, reason = "all fields read by task 10; remove then")]
 pub struct CommentsConfig {
     pub context_lines: usize,
-    pub preamble: Option<String>,
+    pub preamble: String,
 }
 
 #[derive(Debug, Deserialize)]

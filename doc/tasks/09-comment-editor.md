@@ -8,7 +8,7 @@ Read first: `doc/spec.md` §10 (comment editor, modals), §11 (row mode Enter/`D
 
 ## Context
 
-Task 08 builds a `CommentTarget` when Enter is pressed in Cursor/Visual/VisualLine mode. `comments::model` (task 06) provides `CommentSet`, `draft`, `prefill_body`, `overlaps`, `at`. `App` already has an empty `comments: CommentSet` field. Comments live in memory only in this task; saving is task 10.
+Task 08 builds a `comments::model::Anchor` when Enter is pressed in Cursor/Visual/VisualLine mode. `comments::model` (task 06) provides `CommentSet`, `draft`, `prefill_body`, `overlaps`, `at`. `App` already has an empty `comments: CommentSet` field. Comments live in memory only in this task; saving is task 10.
 
 ## Deliverables
 
@@ -21,12 +21,13 @@ Task 08 builds a `CommentTarget` when Enter is pressed in Cursor/Visual/VisualLi
 
 ### Flows (`app/actions.rs`)
 
-- **Create** (Enter in Cursor/Visual/VisualLine): if `overlaps(...)` returns an id → status "Overlaps comment #N" and stay in the current mode. Otherwise build a draft (`context_lines` from config, language from `highlight::languages::detect(...).name()`), body = `prefill_body(selected_text)` for visual modes or empty for cursor mode, add it to the set, open the editor with the cursor on the line after the fence (or at the start for an empty body). Return to Row mode underneath.
+- **Create** (Enter in Cursor/Visual/VisualLine): if `overlaps(...)` returns an id → status "Overlaps comment #N" and stay in the current mode. Otherwise build a draft with `draft(anchor, language, side_lines, context_lines, body)` (`side_lines` = the active `SideText::lines`, `context_lines` from config, language from `highlight::languages::detect(...).name()`). For visual modes (`Lines`/`Chars`) set `body = prefill_body(&selected_text, language)`, where `selected_text` comes from `Comment::selected_text()` (build the draft with an empty body, read it, or add then fill via `get_mut`); cursor mode (`Line`) starts empty. Add it to the set, open the editor with the cursor on the line after the fence (or at the start for an empty body). Return to Row mode underneath.
 - **Edit** (Enter in Row mode on a line that has a comment on the active side, via `at(...)`): open the editor on that comment, cursor at the end.
 - **Delete** (`D` in Row mode on a commented line): "Delete comment #N?" modal; Enter removes it. `D` on an uncommented line: status message.
 - **Close editor** (Esc): "Close comment?" modal; Enter closes, Esc returns to editing. On close, if the body is empty or whitespace, remove the comment.
 - `Ctrl-q` inside the editor still opens the quit modal.
 - Remove the `#[allow(dead_code)]` on `Config` in `config.rs` once `comments.context_lines` is read.
+- Remove the `#[allow(dead_code, reason = "used by task 09; remove then")]` on `mod comments;` in `main.rs` (task 06); `store` stays unused until task 10, so move an `#[allow]` onto `pub mod store;` if needed.
 
 ### Rendering
 

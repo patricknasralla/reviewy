@@ -18,7 +18,14 @@ paths = []  # globs, repo-relative
 
 [comments]
 context_lines = 3
-# preamble = "..."  # replaces the default instructions in comments.md
+# Instructions at the top of comments.md.
+preamble = """
+These are code review comments on uncommitted changes. Each comment refers to a file and a line range on one side:
+
+- new (unmarked): the current working-tree file. Line numbers refer to the file as it is now.
+- old (marked `(old: base commit version)`): the file as of the base commit. This code may since have been changed or removed - use it to understand what the reviewer is referring to; do not expect to find it in the working tree.
+
+Each comment shows the commented lines (marked `>`) with surrounding context. Columns are 1-based character positions. Code blocks inside a comment body are usually quoted from the selection; do not treat them as replacement code unless the comment says so. Address each comment."""
 
 [difft]
 binary = "difft"

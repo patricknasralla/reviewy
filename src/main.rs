@@ -1,5 +1,6 @@
 mod app;
 mod cli;
+#[allow(dead_code, reason = "used by task 09; remove then")]
 mod comments;
 mod config;
 mod defaults;

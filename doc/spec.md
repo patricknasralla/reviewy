@@ -152,7 +152,7 @@ src/
     theme.rs           Zed theme JSON parsing, alpha blending, capture fallback, bundled themes
   comments.rs          declares submodules
   comments/
-    model.rs           Comment, Side, LineRange, ColRange, Context, CommentSet
+    model.rs           CommentSet, Comment, Anchor, Selection, Excerpt, draft, prefill
     store.rs           JSON load/save
     render_md.rs       preamble + markdown rendering
   vim.rs               declares submodules
@@ -543,30 +543,38 @@ All cursor-mode motions extend the selection. Selections cannot cross columns.
 struct CommentSet {
     version: u32,            // schema version, 1
     base: Base,              // { ref: "HEAD", commit: "<sha>" }
-    next_id: u32,            // ids only increase, never reused
+    next_id: u32,            // ids only increase, never reused (survives deletions)
     comments: Vec<Comment>,
 }
 
 struct Comment {
     id: u32,
-    file: PathBuf,           // repo-relative path on the commented side
-    side: Side,              // Old (HEAD) | New (working tree)
-    lines: LineRange,        // 1-based, inclusive
-    cols: Option<ColRange>,  // 1-based, inclusive, in chars; charwise selections only
-    language: Option<String>,
-    selected_text: String,   // the selected text (whole line(s) for line comments)
-    context: Context,        // N lines before/after on the same side
+    anchor: Anchor,
+    language: Option<String>, // fence tag
+    excerpt: Excerpt,        // selected lines plus N lines of context either side
     body: String,
 }
 
-struct Context { before: Vec<NumberedLine>, after: Vec<NumberedLine> }
-struct NumberedLine { line: u32, text: String }
+struct Anchor { file: PathBuf, side: Side, selection: Selection }  // file: repo-relative path on the commented side
+enum Side { Old, New }       // Old = HEAD, New = working tree
+
+enum Selection {             // 1-based, inclusive; cols in chars
+    Line { line: u32 },                  // row / cursor-mode comment (the default)
+    Lines { start: u32, end: u32 },      // V mode, start < end
+    Chars { start: Pos, end: Pos },      // v mode, start <= end; start.col may exceed end.col across lines
+}
+struct Pos { line: u32, col: u32 }
+
+struct Excerpt { start: u32, lines: Vec<String> }  // contiguous lines from `start`
 ```
 
+- `Selection::from_lines` / `from_chars` order the ends (backwards selections) and give `Line` for a single line.
+- The selected text is not stored: `Comment::selected_text()` derives it from the excerpt and selection.
 - `context_lines` (default 3) controls N.
 - Overlap is allowed by the model (ranges are independent). **v1 UI refuses** to create a comment whose line range intersects an existing comment on the same file and side, with a status message. The v1.1 picker lifts this without model changes.
 - Old-side comments are flagged by `side = Old`; the preamble explains what that means.
 - No staleness checks in v1. The base commit is stored for later verification.
+- **Tabs (v1):** excerpt text and cols come from tab-expanded lines, so tab-indented files get spaces and expanded columns. See task 11 follow-ups.
 
 ### Lifecycle
 
@@ -577,11 +585,12 @@ struct NumberedLine { line: u32, text: String }
 ### Persistence
 
 - In-memory only during a session. No writes per keystroke.
-- Written on confirmed quit and on termination signals (SIGTERM, SIGHUP, SIGINT via `signal-hook` → `AtomicBool`, checked in the event loop).
+- Written on confirmed quit and on termination signals (SIGTERM, SIGHUP, SIGINT via `signal-hook` -> `AtomicBool`, checked in the event loop).
 - Panics: the panic hook restores the terminal and reports; comments are **not** saved (accepted for v1).
-- Writes use write-temp-then-rename within `.reviewy/`.
-- Empty comment set on exit → both files deleted.
+- Writes use write-temp-then-rename within `.reviewy/`, so a kill mid-write never leaves a truncated file.
+- Empty comment set on exit -> both files deleted.
 - Files: `.reviewy/comments.json` (source of truth, serde, lossless), `.reviewy/comments.md` (generated, never parsed back).
+- `load` checks `version` before deserializing the rest; `!= 1` is an error.
 
 ### `comments.json` example
 
@@ -593,25 +602,24 @@ struct NumberedLine { line: u32, text: String }
   "comments": [
     {
       "id": 3,
-      "file": "src/foo.rs",
-      "side": "new",
-      "lines": { "start": 42, "end": 42 },
-      "cols": { "start": 9, "end": 20 },
-      "language": "rust",
-      "selected_text": "parse_header",
-      "context": {
-        "before": [ { "line": 39, "text": "..." }, { "line": 40, "text": "..." }, { "line": 41, "text": "..." } ],
-        "after":  [ { "line": 43, "text": "..." }, { "line": 44, "text": "..." }, { "line": 45, "text": "..." } ]
+      "anchor": {
+        "file": "src/foo.rs",
+        "side": "new",
+        "selection": { "kind": "chars", "start": { "line": 42, "col": 9 }, "end": { "line": 42, "col": 20 } }
       },
+      "language": "rust",
+      "excerpt": { "start": 39, "lines": [ "...", "...", "...", "    let h = parse_header(buf);", "...", "...", "..." ] },
       "body": "```rust\nparse_header\n```\nThis should return a Result rather than panicking."
     }
   ]
 }
 ```
 
+Other selections: `{ "kind": "line", "line": 42 }`, `{ "kind": "lines", "start": 52, "end": 53 }`.
+
 ### `comments.md` layout
 
-Comments are sorted by file, then by start line.
+ASCII only. Comments are sorted by file, then start line, then id.
 
 ````markdown
 # Review comments
@@ -622,7 +630,7 @@ Base commit: `3f2c9e1a` (HEAD)
 
 ## src/foo.rs
 
-### #3 — line 42, cols 9–20 (new)
+### #3 - line 42 col 9 - line 42 col 20
 
 ```rust
   39 | ...
@@ -632,27 +640,27 @@ Base commit: `3f2c9e1a` (HEAD)
   43 | ...
 ```
 
-Selected: `parse_header`
-
 ```rust
 parse_header
 ```
 This should return a Result rather than panicking.
 ````
 
-- Selected lines in the context block are marked with `>`.
-- Old-side headings read e.g. `### #5 — lines 10–12 (old: base commit version)`.
+- Headings: `### #3 - line 42`, `### #4 - lines 52-53`, `### #6 - line 61 col 9 - line 63 col 3`.
+- New-side comments carry no side marker; old-side headings end with `(old: base commit version)`.
+- Excerpt: fenced with the language tag, line numbers right-aligned to the widest in the excerpt, `>` on selected lines. No separate `Selected:` line: the visual-mode prefill quotes the selection in the body.
+- Body verbatim after the excerpt.
 
 ### Default preamble
 
-Replaceable via `comments.preamble` in config.
+In `src/defaults/defaults.toml` (`comments.preamble`); replaceable in config.
 
-> These are code review comments on uncommitted changes. Each comment refers to a file, a side, and a line range:
+> These are code review comments on uncommitted changes. Each comment refers to a file and a line range on one side:
 >
-> - **new**: the current working-tree file. Line numbers refer to the file as it is now.
-> - **old**: the file as of the base commit. This code may since have been changed or removed — use it to understand what the reviewer is referring to; do not expect to find it in the working tree.
+> - new (unmarked): the current working-tree file. Line numbers refer to the file as it is now.
+> - old (marked `(old: base commit version)`): the file as of the base commit. This code may since have been changed or removed - use it to understand what the reviewer is referring to; do not expect to find it in the working tree.
 >
-> Each comment shows the commented lines (marked `>`) with surrounding context. Code blocks inside a comment body are usually quoted from the selection; do not treat them as replacement code unless the comment says so. Address each comment.
+> Each comment shows the commented lines (marked `>`) with surrounding context. Columns are 1-based character positions. Code blocks inside a comment body are usually quoted from the selection; do not treat them as replacement code unless the comment says so. Address each comment.
 
 ## 13. Configuration
 

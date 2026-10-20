@@ -2,7 +2,7 @@
 
 ## Goal
 
-Add Cursor, Visual (charwise) and VisualLine modes to the diff view: a text cursor on the active side driven by the vim motions, selection rendering, and a `CommentTarget` describing what Enter would comment on. Task 09 consumes that target to open the comment editor.
+Add Cursor, Visual (charwise) and VisualLine modes to the diff view: a text cursor on the active side driven by the vim motions, selection rendering, and an `Anchor` (task 06) describing what Enter would comment on. Task 09 consumes that target to open the comment editor.
 
 Read first: `doc/spec.md` §11 (mode hierarchy, cursor mode, visual modes, examples), §10 (diff view, wrapping, status line). Read handoff notes in `doc/tasks/05-vim.md` and `07-app-row-mode.md` (and skim the others).
 
@@ -19,16 +19,17 @@ Row mode (task 07) moves a whole-line cursor on the active column. Enter on a no
 - Visual modes: every cursor-mode motion extends the selection; Esc → Cursor mode. Selections never cross columns.
 - Horizontal scroll with wrap off: keep the cursor column visible on the active side (both columns scroll together).
 - Rendering: cursor as a reversed cell on the active side; selection with a distinct background (use the theme's `active_line_background` lightened, or a `selection` key if the theme has one — document the choice).
-- `CommentTarget { file, side: Side, lines: LineRange, cols: Option<ColRange>, selected_text: Option<String> }` (1-based, `comments::model` types), built on Enter:
-  - Cursor mode: current line, no cols, no selected text (editor starts empty).
-  - Visual: the char range (inclusive, 1-based chars), `cols` set only for single- or multi-line charwise selections, `selected_text` = the selected chars.
-  - VisualLine: the line range, no cols, `selected_text` = the whole lines.
-  - In this task Enter shows the target in the status line (e.g. "Comment target: new 12–14") and returns to Row mode. Task 09 replaces this with opening the editor.
+- The comment target is a `comments::model::Anchor { file, side: Side, selection: Selection }` (task 06; 1-based, inclusive, cols in chars), built on Enter:
+  - Cursor mode: `Selection::from_lines(line, line)` -> `Line` (editor starts empty).
+  - Visual: `Selection::from_chars(anchor, cursor)` -> `Chars`; it orders the ends, so a backwards selection needs no special handling.
+  - VisualLine: `Selection::from_lines(anchor_line, cursor_line)` -> `Line` or `Lines`.
+  - No selected text is built here: task 09 gets it from `Comment::selected_text()` after `draft`.
+  - In this task Enter shows the target in the status line (e.g. "Comment target: new lines 12-14", using `Selection`'s `Display`) and returns to Row mode. Task 09 replaces this with opening the editor.
 - Status line shows `CURSOR` / `VISUAL` / `V-LINE` and `line:col`.
 
 ## Tests
 
-- Unit: building `CommentTarget` for each of the three modes from a fixture side (including a charwise selection made backwards, anchor after cursor).
+- Unit: building the `Anchor` for each of the three modes from a fixture side (including a charwise selection made backwards, anchor after cursor).
 - Unit: screen-row `j` across a wrapped line followed by a padding row.
 - Snapshot: diff view with a charwise selection spanning two lines.
 

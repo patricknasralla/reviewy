@@ -54,4 +54,35 @@ The reviewer selects lines or text in the diff view and writes a comment. On exi
 
 ## Handoff notes
 
-_To be filled in by the implementing agent._
+### Public interfaces
+
+- `comments::CommentsError::{Io { path, source }, Json { path, source }, Version(u32)}`.
+- `comments::model`:
+  - `VERSION = 1`; `CommentSet { version, base: Base, next_id, comments: Vec<Comment> }`; `Base { ref_name /* "ref" */, commit }`.
+  - `Comment { id, anchor: Anchor, language: Option<String>, excerpt: Excerpt, body }`; `Comment::selected_text() -> String`.
+  - `Anchor { file: PathBuf, side: Side, selection: Selection }`; `Side::{Old, New}` (`Copy`).
+  - `Selection::{Line { line }, Lines { start, end }, Chars { start: Pos, end: Pos }}` (serde `kind` tag); `from_lines(a, b)`, `from_chars(a, b)` (order the ends), `line_range() -> RangeInclusive<u32>`, `Display` = md heading text. `Pos { line, col }` (`Ord`).
+  - `Excerpt { start, lines: Vec<String> }`, `Excerpt::line(n) -> &str` ("" outside).
+  - `CommentSet::{new(Base), add(CommentDraft) -> u32, get, get_mut, remove(id) -> Option<Comment>, at(&Path, Side, line), overlaps(&Anchor) -> Option<u32>, count_for(&Path)}`.
+  - `CommentDraft { anchor, language, excerpt, body }`; `draft(anchor, language: Option<&str>, side_lines: &[String], context_lines: usize, body: String) -> CommentDraft`.
+  - `fence(text) -> String`, `prefill_body(text, language: Option<&str>) -> String` (ends with `\n`: cursor on the empty line after the fence).
+- `comments::store::{load(dir) -> Result<Option<CommentSet>, _>, save(dir, &CommentSet, preamble: &str) -> Result<(), _>}`: both take the `.reviewy/` dir.
+- `comments::render_md::render(&CommentSet, preamble: &str) -> String`.
+
+### Decisions and deviations (developer decisions; spec §5, §12 rewritten)
+
+- **Selection enum** replaces `LineRange` + `ColRange`: one variant per md heading form, invalid states unrepresentable. `Block` would be a future variant.
+- **`Anchor`** groups file/side/selection; it is task 08's comment target (`CommentTarget` dropped; task 08 updated). JSON nests it (no `flatten`).
+- **`Excerpt` replaces `Context`/`NumberedLine`/`selected_text`**: contiguous lines (selected + context), numbered from `start`. Fixes charwise comments, whose full selected lines had nowhere to live. Selected text is derived, never stored.
+- **Markdown:** ASCII only; headings `#3 - line 42`, `#4 - lines 52-53`, `#5 - line 60 col 3 - line 60 col 7`; old side adds `(old: base commit version)`, new side unmarked (the preamble says so); no `Selected:` line. Sorted by file, start line, id.
+- **Default preamble moved to `defaults.toml`**; `CommentsConfig::preamble: String` (task 01 module change, task 01 notes updated).
+- **`load` checks `version` first** (small header struct), so a future schema gives the version error.
+- **Tabs deferred:** excerpt text and cols are in tab-expanded space in v1. The fix is caller-only (task 11 updated).
+- `next_id` kept (not derived from `len()`/max id) so deleted ids are never reused.
+- Writes go to `.<name>.tmp` then `rename`; no fsync.
+- **Dead code:** `#[allow(dead_code, reason = "used by task 09; remove then")]` on `mod comments;` in `main.rs` (task 09 updated).
+- Extra test beyond the list: `selected_text` for a backwards multi-line `Chars` selection.
+
+### Left undone
+
+- `store::load` is not unit-tested here; task 11's `tests/comments.rs` round trip covers it.

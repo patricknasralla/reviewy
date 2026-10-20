@@ -1,0 +1,92 @@
+---
+source: src/comments/model.rs
+expression: json
+---
+{
+  "version": 1,
+  "base": {
+    "ref": "HEAD",
+    "commit": "3f2c9e1a77b0c4d5e6f708192a3b4c5d6e7f8091"
+  },
+  "next_id": 4,
+  "comments": [
+    {
+      "id": 1,
+      "anchor": {
+        "file": "src/foo.rs",
+        "side": "new",
+        "selection": {
+          "kind": "chars",
+          "start": {
+            "line": 8,
+            "col": 6
+          },
+          "end": {
+            "line": 9,
+            "col": 3
+          }
+        }
+      },
+      "language": "rust",
+      "excerpt": {
+        "start": 5,
+        "lines": [
+          "line 5 text",
+          "line 6 text",
+          "line 7 text",
+          "line 8 text",
+          "line 9 text",
+          "line 10 text",
+          "line 11 text",
+          "line 12 text"
+        ]
+      },
+      "body": "```rust\n8 text\nlin\n```\nWhy?"
+    },
+    {
+      "id": 2,
+      "anchor": {
+        "file": "src/foo.rs",
+        "side": "new",
+        "selection": {
+          "kind": "line",
+          "line": 2
+        }
+      },
+      "language": "rust",
+      "excerpt": {
+        "start": 1,
+        "lines": [
+          "line 1 text",
+          "line 2 text",
+          "line 3 text",
+          "line 4 text",
+          "line 5 text"
+        ]
+      },
+      "body": "Rename this."
+    },
+    {
+      "id": 3,
+      "anchor": {
+        "file": "src/bar.py",
+        "side": "old",
+        "selection": {
+          "kind": "lines",
+          "start": 4,
+          "end": 5
+        }
+      },
+      "language": "python",
+      "excerpt": {
+        "start": 3,
+        "lines": [
+          "line 3 text",
+          "line 4 text",
+          "line 5 text"
+        ]
+      },
+      "body": "Was this removed on purpose?"
+    }
+  ]
+}

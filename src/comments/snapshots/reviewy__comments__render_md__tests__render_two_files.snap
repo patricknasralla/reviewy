@@ -1,0 +1,54 @@
+---
+source: src/comments/render_md.rs
+expression: "render(&sample_set(), \"Preamble text.\")"
+---
+# Review comments
+
+Preamble text.
+
+Base commit: `3f2c9e1a` (HEAD)
+
+## src/bar.py
+
+### #3 - lines 4-5 (old: base commit version)
+
+```python
+  3 | line 3 text
+> 4 | line 4 text
+> 5 | line 5 text
+```
+
+Was this removed on purpose?
+
+## src/foo.rs
+
+### #2 - line 2
+
+```rust
+  1 | line 1 text
+> 2 | line 2 text
+  3 | line 3 text
+  4 | line 4 text
+  5 | line 5 text
+```
+
+Rename this.
+
+### #1 - line 8 col 6 - line 9 col 3
+
+```rust
+   5 | line 5 text
+   6 | line 6 text
+   7 | line 7 text
+>  8 | line 8 text
+>  9 | line 9 text
+  10 | line 10 text
+  11 | line 11 text
+  12 | line 12 text
+```
+
+```rust
+8 text
+lin
+```
+Why?
