@@ -1,20 +1,6 @@
-# Implementation tasks
+# Overview
 
-Reviewy v1 is built one task at a time, in order. Each task is carried out by a fresh agent with no prior context. Everything the agent needs is in this folder, the spec, and the code already written.
-
-| # | Task | Spec sections | Depends on |
-|---|---|---|---|
-| 01 | [Scaffold](01-scaffold.md) | §4, §5, §13, §14, §15 | - |
-| 02 | [Git integration](02-git.md) | §6 | 01 |
-| 03 | [Diff engine and alignment](03-diff.md) | §7, §8 | 02 |
-| 04 | [Syntax highlighting and themes](04-highlight.md) | §9 | 03 |
-| 05 | [Vim engine](05-vim.md) | §11 (vim engine), §10 (wrapping) | 01 |
-| 06 | [Comments model and output](06-comments.md) | §12 | 01 |
-| 07 | [App, explorer, diff view (row mode)](07-app-row-mode.md) | §4, §10, §11 (row mode) | 02–05 |
-| 08 | [Cursor and visual modes](08-cursor-visual.md) | §11 | 07 |
-| 09 | [Comment editor and comment lifecycle](09-comment-editor.md) | §10 (editor, modals), §12 | 06, 08 |
-| 10 | [Persistence and shutdown](10-persistence.md) | §4 (startup/shutdown), §12 (persistence) | 09 |
-| 11 | [Integration tests and polish](11-integration.md) | §16 | 10 |
+Reviewy is a terminal UI for reviewing a project's uncommitted changes, typically made by an AI agent, and leaving line-anchored review comments for the agent to act on. Think GitHub's PR review UI, but local, fast and vim-driven.
 
 ## Project Basics:
 
@@ -26,7 +12,7 @@ Reviewy v1 is built one task at a time, in order. Each task is carried out by a 
 
 ### Style
 
-- Rust edition 2024, toolchain 1.96. 
+- Rust edition 2024, toolchain 1.96.
 - Idiomatic Rust.
   - `src/foo.rs` + `src/foo/`, never `mod.rs`.
 - Keep modules small and focused on a single struct.
@@ -35,23 +21,34 @@ Reviewy v1 is built one task at a time, in order. Each task is carried out by a 
 - Explicit over clever, but aim for brevity.
 - Cut any line that doesn't earn its place.
 - Comment only the non-obvious; don't restate the code.
-- One-line docstring only when it states what the signature can't: input format, return shape, or key/complex behavior. 
+- One-line docstring only when it states what the signature can't: input format, return shape, or key/complex behavior.
 - `cargo fmt`, `cargo clippy --all-targets` clean (no warnings), `cargo test` green before you finish.
 - Errors: `thiserror` enums in library modules, `eyre::Result` in `main`/`app`. `unwrap()` where invariant is obvious.
 
 ### Workflow
 
 - All work starts with discussion and follows the following stepwise approach. **ONLY WRITE CODE AT THE CORRECT STEP AS OUTLINED HERE**
+- There are two workflows:
+  1. A discussion is initiated.
+  2. A task file is given to read.
 
-Steps:
+Steps for discussion:
 
-1. Read allocated task and subsequent files as outlined in the task.
+1. **NO CODE IS TO BE WRITTEN THIS SESSION**
+2. The developer will provide an outline of the work with a basic list of requirements.
+3. Discuss the outline and architecture, ask questions and push back on assumptions. This will continue until we are happy with the structure and tasks. If needed, source files can be explored at this point.
+4. At this point, the developer will ask for a document. This should be created in `/doc/tasks` and include all information so that a clean instance could carry out the task (including relevant source files to read).
+5. Once the developer is happy with the document, commit.
+
+Steps when given a task file:
+
+1. Read the allocated task and subsequent files as outlined in the task.
 2. Analyze and critique the approach and discuss with the developer.
 3. When told to by developer, switch to plan mode and plan current task. When planning, write plan using the Principles and style outlined in this document.
-5. Code can be written **when plan is approved**.
-6. Developer will review code written and comment on changes.
-7. Once dev happy, perform handoff procedure as outlined below. 
-8. Dev will authorize commit to main. Each task should be 1 commit. Note no need for branches for this project as it is the initial work.
+4. Code can be written **when plan is approved**. Code should be written in new branch. If work spreads over multiple tasks, these should be separate commits in this branch.
+5. Developer will review code written and comment on changes using Reviewy. Read comments md document in the `.reviewy` directory and respond as per document.
+6. Once dev happy, perform handoff procedure as outlined below.
+7. Dev will authorize commit. Each task should be 1 commit.
 
 ## Rules for every task
 
@@ -70,3 +67,4 @@ Each task file ends with a **Handoff notes** section. When you finish:
 1. Fill in your task's Handoff notes: public interfaces you created (type/function signatures), decisions you made that the spec did not settle, deviations from the spec, and anything left undone.
 2. If a decision changes what a later task must do, edit that later task file directly so it stays correct for an agent with no context.
 3. If a decision changes the spec's design, update `doc/spec.md` too.
+4. If decisions change the app's function, `README.md` should also be updated to match this.
