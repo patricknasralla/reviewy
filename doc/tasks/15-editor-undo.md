@@ -54,3 +54,23 @@ From task 13: `Buffer` (`editor/buffer.rs`) keeps `lines` private; snapshots nee
 - fmt, clippy, tests clean.
 
 ## Handoff notes
+
+### Public interfaces
+
+- `config::EditorConfig { undo_levels: usize }`, `Config::editor`; `[editor] undo_levels = 100` in `defaults.toml`.
+- `editor::undo` (new, private): `Snapshot { buffer: Buffer, cursor: Cursor }`; `Undo::new(levels)`, `record(before)` (clears redo), `undo(current) -> Option<Snapshot>`, `redo(current) -> Option<Snapshot>`.
+- `Editor::new(id, title, body, mode, undo_levels)`; private fields `undo`, `insertion: Option<Snapshot>`; private `snapshot()`, `commit(before)`.
+- `Buffer` derives `Clone, PartialEq`.
+- `vim::keys`: `Command::Undo`, `Command::Redo`; `u` and `Ctrl-r` in the `EDITOR` table.
+
+### Decisions (developer decisions; spec §2, §5, §10, §13 and README updated)
+
+- Naming: the Insert-mode group is an "insertion" (field `insertion`), not a "session".
+- Snapshots are whole `Buffer` clones; "changed" is buffer equality against the snapshot, not the edit functions' return values (typing then deleting back records nothing).
+- Only commands that can edit (`Insert`, `DeleteChar`, `Operator`, `Put`, paste) take a snapshot; motions and visual toggles don't. `commit` keeps the snapshot as the insertion start when the command left the editor in Insert, else records it if the text changed.
+- Undo restores the snapshot's cursor (clamped for Normal), not vim's change position.
+- Test helper `Run` (key-sequence driver) moved from `editor/operator.rs` tests to `editor.rs` tests and is shared with `editor/undo.rs` tests; `\x12` feeds Ctrl-r; `is()` returns the runner for chaining.
+
+### Left undone / flagged
+
+- No "Already at oldest change" message: `u`/`Ctrl-r` with nothing to restore do nothing.

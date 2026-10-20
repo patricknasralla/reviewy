@@ -20,6 +20,7 @@ pub struct Config {
     pub limits: LimitsConfig,
     pub ignore: IgnoreConfig,
     pub comments: CommentsConfig,
+    pub editor: EditorConfig,
     pub difft: DifftConfig,
 }
 
@@ -54,6 +55,12 @@ pub struct IgnoreConfig {
 pub struct CommentsConfig {
     pub context_lines: usize,
     pub preamble: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EditorConfig {
+    pub undo_levels: usize,
 }
 
 #[derive(Debug, Deserialize)]

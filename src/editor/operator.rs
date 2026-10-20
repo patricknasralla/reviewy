@@ -258,58 +258,7 @@ fn last_char(end: Pos) -> Pos {
 
 #[cfg(test)]
 mod tests {
-    use crossterm::event::{KeyCode, KeyEvent};
-
-    use super::*;
-    use crate::vim::keys::{Context, KeyParser};
-
-    struct Run {
-        e: Editor,
-        regs: Registers,
-    }
-
-    /// Normal-mode editor `width` wide with the cursor at `(line, col)`.
-    fn run(body: &str, width: u16, (line, col): (usize, usize)) -> Run {
-        let mut e = Editor::new(1, String::new(), body, Mode::Normal);
-        e.resize(width, 10);
-        e.cursor.pos = Pos { line, col };
-        e.settle();
-        Run {
-            e,
-            regs: Registers::default(),
-        }
-    }
-
-    impl Run {
-        /// Feeds `keys` as typed; `\x1b` is Esc.
-        fn keys(&mut self, keys: &str) -> &mut Self {
-            let mut parser = KeyParser::default();
-            for c in keys.chars() {
-                let code = if c == '\x1b' {
-                    KeyCode::Esc
-                } else {
-                    KeyCode::Char(c)
-                };
-                let ctx = match self.e.mode {
-                    Mode::Insert => {
-                        self.e.insert_key(KeyEvent::from(code));
-                        continue;
-                    }
-                    Mode::Normal => Context::EditorNormal,
-                    _ => Context::EditorVisual,
-                };
-                if let Some(input) = parser.handle(KeyEvent::from(code), ctx) {
-                    self.e.input(input, &mut self.regs);
-                }
-            }
-            self
-        }
-
-        fn is(&self, text: &str, (line, col): (usize, usize)) {
-            assert_eq!(self.e.text(), text);
-            assert_eq!(self.e.cursor.pos, Pos { line, col });
-        }
-    }
+    use crate::editor::tests::run;
 
     #[test]
     fn dw_stops_at_line_end() {

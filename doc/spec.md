@@ -34,7 +34,7 @@ Design principles:
 
 ### v1.1 (planned, design must not block these)
 
-- Modal (vim) editing in the comment editor, built on the shared vim engine: Normal/Insert modes and motions (task 13), operators, register and visual mode (task 14) done; undo (task 15) in progress.
+- Modal (vim) editing in the comment editor, built on the shared vim engine: Normal/Insert modes and motions (task 13), operators, register and visual mode (task 14), undo/redo (task 15) done.
 - Picker for lines covered by multiple overlapping comments (model already supports overlap).
 - CLI arguments mirroring `git diff` (ranges, `--staged`, etc.). Argument scaffolding exists in v1 (§4); behavior **to be discussed**.
 - Yank selection to the system clipboard. The editor has an internal unnamed register (`vim/register.rs`); named registers and the clipboard build on it.
@@ -180,6 +180,7 @@ src/
   editor/
     buffer.rs          Buffer: lines with position-based insert/delete/slice, TextView
     operator.rs        operator spans (motion/line/selection) and d/c/y, p/P
+    undo.rs            Undo: capped undo/redo stacks of buffer + cursor snapshots
   ui.rs                declares submodules; top-level draw(), drawn block cursor
   ui/
     explorer.rs        explorer overlay
@@ -492,7 +493,7 @@ For "Load existing", the question is "Found N comments from a previous session (
   - Cursor after: delete -> range start (linewise: first non-blank of the line now there); yank -> range start (`yy` stays); change -> range start, Insert; charwise put -> last put char; linewise put -> first non-blank of the first put line.
 - **Register:** one unnamed register owned by `App`, so it is shared across comments and survives closing the editor. Every `d c x X y` writes it; text has no trailing line break, `linewise` marks whole-line text.
 - **Visual / visual-line** (`v`/`V` from Normal, `Context::EditorVisual`): motions extend the selection; `v`/`V` toggle as in the diff view; Esc -> Normal (never the close modal). `d`/`x` delete, `c` change, `y` yank the selection (charwise inclusive of the cursor char; whole lines in visual-line); `D X C Y` act on the lines the selection covers. `p` replaces the selection with the register without changing it; if the register and selection kinds differ, the register text is inserted as plain chars where the selection was. Operators return to Normal (Insert for change). Status line: `VISUAL` / `V-LINE`.
-- Undo: task 15.
+- **Undo / redo** (`u`, `Ctrl-r` in Normal, with counts): each Normal/visual change (`x X d c y p P`, visual ops, paste outside Insert) is one step; an insertion (entering Insert up to Esc, including the change that entered it: `cw cc C o O i a…`, and pastes during it) is one step. A new comment opens in Insert, so its first insertion starts when the editor opens. A step is recorded only when the text changed. A new step clears redo. Undo restores the saved text and cursor (vim moves the cursor to the change instead); the register is never touched. History is per editor (gone on close) and capped at `editor.undo_levels` (oldest dropped; `0` disables undo).
 
 ## 11. Input and modes
 
@@ -727,6 +728,9 @@ context_lines = 3
 # preamble = """
 # Custom instructions for the agent...
 # """
+
+[editor]
+undo_levels = 100            # undo steps kept per comment editor; 0 disables undo
 
 [difft]
 # binary = "difft"           # override difft path

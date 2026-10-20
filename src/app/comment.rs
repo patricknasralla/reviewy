@@ -139,7 +139,8 @@ impl App {
             Side::New => "new",
         };
         let title = format!("Comment - {}:{lines} ({side})", anchor.file.display());
-        let mut editor = Editor::new(id, title, &comment.body, mode);
+        let levels = self.config.editor.undo_levels;
+        let mut editor = Editor::new(id, title, &comment.body, mode, levels);
         let area = ui::editor::inner(self.view_area());
         editor.resize(area.width, area.height);
         self.modals.push(Modal::Editor(editor));

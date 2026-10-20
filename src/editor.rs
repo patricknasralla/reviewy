@@ -2,6 +2,7 @@
 
 pub mod buffer;
 mod operator;
+mod undo;
 
 use std::ops::Range;
 
@@ -13,6 +14,7 @@ use crate::vim::motion::{self, Cursor, MotionCtx, Pos, TextView};
 use crate::vim::register::{Register, Registers};
 use crate::vim::{selection, wrap};
 use buffer::Buffer;
+use undo::{Snapshot, Undo};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -35,6 +37,9 @@ pub struct Editor {
     /// `want` is the display column within the cursor's screen row, kept by vertical moves.
     cursor: Cursor,
     mode: Mode,
+    undo: Undo,
+    /// State before the current insertion (entering Insert up to Esc), which is one undo step.
+    insertion: Option<Snapshot>,
     /// First visible screen row.
     scroll: usize,
     width: u16,
@@ -43,11 +48,11 @@ pub struct Editor {
 
 impl Editor {
     /// Cursor at the end of `body`. Call `resize` before use: it lays out the text.
-    pub fn new(id: u32, title: String, body: &str, mode: Mode) -> Self {
+    pub fn new(id: u32, title: String, body: &str, mode: Mode, undo_levels: usize) -> Self {
         let buffer = Buffer::from_text(body);
         let line = buffer.line_count() - 1;
         let col = buffer.len(line);
-        Self {
+        let mut editor = Self {
             id,
             title,
             buffer,
@@ -56,10 +61,16 @@ impl Editor {
                 want: 0,
             },
             mode,
+            undo: Undo::new(undo_levels),
+            insertion: None,
             scroll: 0,
             width: 1,
             height: 1,
+        };
+        if mode == Mode::Insert {
+            editor.insertion = Some(editor.snapshot());
         }
+        editor
     }
 
     pub fn mode(&self) -> Mode {
@@ -79,6 +90,14 @@ impl Editor {
     pub fn input(&mut self, input: Input, regs: &mut Registers) -> bool {
         let Pos { line, col } = self.cursor.pos;
         let len = self.buffer.len(line);
+        let edits = matches!(
+            input.command,
+            Command::Insert(_)
+                | Command::DeleteChar { .. }
+                | Command::Operator { .. }
+                | Command::Put { .. }
+        );
+        let before = edits.then(|| self.snapshot());
         let changed = match input.command {
             Command::Motion(m) => {
                 self.cursor = motion::apply(m, input.count, self.cursor, &self.buffer, &self.ctx());
@@ -104,6 +123,21 @@ impl Editor {
             }
             Command::Operator { op, target } => self.operator(op, target, input.count, regs),
             Command::Put { before } => self.put(before, input.count, regs),
+            Command::Undo | Command::Redo => {
+                let mut restored = false;
+                for _ in 0..input.count.unwrap_or(1) {
+                    let current = self.snapshot();
+                    let state = if input.command == Command::Undo {
+                        self.undo.undo(current)
+                    } else {
+                        self.undo.redo(current)
+                    };
+                    let Some(state) = state else { break };
+                    (self.buffer, self.cursor) = (state.buffer, state.cursor);
+                    restored = true;
+                }
+                restored
+            }
             Command::Insert(at) => {
                 self.mode = Mode::Insert;
                 match at {
@@ -143,6 +177,9 @@ impl Editor {
             _ => false,
         };
         self.settle();
+        if let Some(before) = before {
+            self.commit(before);
+        }
         changed
     }
 
@@ -159,6 +196,9 @@ impl Editor {
             KeyCode::Esc => {
                 self.mode = Mode::Normal;
                 self.cursor.pos.col = col.saturating_sub(1);
+                if let Some(start) = self.insertion.take() {
+                    self.commit(start);
+                }
             }
             KeyCode::Char(c) if plain => changed = self.insert(c.encode_utf8(&mut [0; 4])),
             KeyCode::Enter => changed = self.insert("\n"),
@@ -193,8 +233,10 @@ impl Editor {
             .split('\n')
             .map(|l| expand_tabs(l, tab_width).0)
             .collect();
+        let before = self.snapshot();
         self.insert(&lines.join("\n"));
         self.settle();
+        self.commit(before);
     }
 
     /// Visible screen rows as (line, byte range in the line), from the scroll position down.
@@ -223,6 +265,23 @@ impl Editor {
         let (seg, x) = self.locate();
         let row = (self.tops()[self.cursor.pos.line] + seg).checked_sub(self.scroll)?;
         (row < usize::from(self.height)).then_some((row as u16, x as u16))
+    }
+
+    fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            buffer: self.buffer.clone(),
+            cursor: self.cursor,
+        }
+    }
+
+    /// In Insert, `before` starts the insertion if none has; otherwise it becomes an undo step
+    /// if the text changed.
+    fn commit(&mut self, before: Snapshot) {
+        if self.mode == Mode::Insert {
+            self.insertion.get_or_insert(before);
+        } else if self.buffer != before.buffer {
+            self.undo.record(before);
+        }
     }
 
     fn ctx(&self) -> MotionCtx {
@@ -378,9 +437,59 @@ fn width(s: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vim::keys::{Context, KeyParser};
+
+    pub(super) struct Run {
+        pub e: Editor,
+        pub regs: Registers,
+    }
+
+    /// Normal-mode editor `width` wide with the cursor at `(line, col)`.
+    pub(super) fn run(body: &str, width: u16, (line, col): (usize, usize)) -> Run {
+        let mut e = Editor::new(1, String::new(), body, Mode::Normal, 100);
+        e.resize(width, 10);
+        e.cursor.pos = Pos { line, col };
+        e.settle();
+        Run {
+            e,
+            regs: Registers::default(),
+        }
+    }
+
+    impl Run {
+        /// Feeds `keys` as typed; `\x1b` is Esc, `\x12` is Ctrl-r.
+        pub fn keys(&mut self, keys: &str) -> &mut Self {
+            let mut parser = KeyParser::default();
+            for c in keys.chars() {
+                let event = match c {
+                    '\x1b' => KeyEvent::from(KeyCode::Esc),
+                    '\x12' => KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
+                    c => KeyEvent::from(KeyCode::Char(c)),
+                };
+                let ctx = match self.e.mode {
+                    Mode::Insert => {
+                        self.e.insert_key(event);
+                        continue;
+                    }
+                    Mode::Normal => Context::EditorNormal,
+                    _ => Context::EditorVisual,
+                };
+                if let Some(input) = parser.handle(event, ctx) {
+                    self.e.input(input, &mut self.regs);
+                }
+            }
+            self
+        }
+
+        pub fn is(&mut self, text: &str, (line, col): (usize, usize)) -> &mut Self {
+            assert_eq!(self.e.text(), text);
+            assert_eq!(self.e.cursor.pos, Pos { line, col });
+            self
+        }
+    }
 
     fn editor(body: &str, width: u16, mode: Mode) -> Editor {
-        let mut e = Editor::new(1, String::new(), body, mode);
+        let mut e = Editor::new(1, String::new(), body, mode, 100);
         e.resize(width, 10);
         e
     }

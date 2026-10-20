@@ -72,6 +72,7 @@ Vim-style Normal and Insert modes. A new comment opens in Insert, an existing on
 - **Normal:** the diff view's motions (`h j k l w b e 0 $ gg G gj gk`, `Ctrl-d`/`Ctrl-u`), `i a I A o O` to insert, `x`/`X` to delete chars. Operators `d`/`c`/`y` with a motion or doubled (`dw`, `cc`, `y$`, `2dd`, `d3w`), `D`/`C`/`Y` to the line end, `p`/`P` to put. Esc asks to close the editor.
 - **Visual / visual line** (`v`/`V`): motions extend the selection; `d`/`x`, `c`, `y` act on it, `D X C Y` on its lines, `p` replaces it. Esc returns to Normal.
 - Yanks and deletes go to one register shared by all comments.
+- `u` / `Ctrl-r` undo and redo (per editor; an insertion from `i`/`cw`/`o`… to Esc is one step).
 - **Insert:** type, Enter, Backspace, Delete, arrows, Home/End, PageUp/PageDown. Esc returns to Normal.
 - Paste inserts at the cursor in either mode.
 - `Ctrl-q` asks to save (Enter) or delete (`d`) the comment; an empty comment is just closed.
@@ -127,6 +128,9 @@ context_lines = 3
 # preamble = """
 # Custom instructions for the agent...
 # """
+
+[editor]
+undo_levels = 100                    # 0 disables undo
 
 [difft]
 # binary = "difft"

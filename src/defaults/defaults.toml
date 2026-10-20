@@ -35,6 +35,9 @@ These are code review comments on uncommitted changes. Each comment refers to a 
 
 Each comment shows the commented lines (marked `>`) with surrounding context. Columns are 1-based character positions. Code blocks inside a comment body are usually quoted from the selection; do not treat them as replacement code unless the comment says so. Address each comment."""
 
+[editor]
+undo_levels = 100  # undo steps kept per comment editor; 0 disables undo
+
 [difft]
 binary = "difft"
 # Graph vertices before difft falls back to a line diff (DFT_GRAPH_LIMIT). Lower is

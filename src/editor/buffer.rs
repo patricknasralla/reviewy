@@ -5,6 +5,7 @@ use std::ops::{Range, RangeInclusive};
 use crate::vim::motion::{Pos, TextView};
 
 /// Always at least one line.
+#[derive(Clone, PartialEq)]
 pub struct Buffer {
     lines: Vec<String>,
 }

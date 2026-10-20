@@ -35,6 +35,8 @@ pub enum Command {
     Put {
         before: bool,
     },
+    Undo,
+    Redo,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -150,6 +152,8 @@ const EDITOR: &[(Key, Command)] = &[
     (Key::Char('P'), Command::Put { before: true }),
     (Key::Char('v'), Command::Visual),
     (Key::Char('V'), Command::VisualLine),
+    (Key::Char('u'), Command::Undo),
+    (Key::Ctrl('r'), Command::Redo),
     (Key::Code(KeyCode::Esc), Command::Escape),
     (Key::Ctrl('q'), Command::Quit),
 ];
