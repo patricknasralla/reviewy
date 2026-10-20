@@ -76,14 +76,20 @@ impl App {
         }
         let changed = match editor.mode() {
             editor::Mode::Insert => editor.insert_key(key),
-            editor::Mode::Normal => {
+            mode => {
+                let normal = mode == editor::Mode::Normal;
+                let ctx = if normal {
+                    Context::EditorNormal
+                } else {
+                    Context::EditorVisual
+                };
                 let pending = !self.keys.pending().is_empty();
-                match self.keys.handle(key, Context::EditorNormal) {
-                    Some(input) if input.command == Command::Escape && !pending => {
+                match self.keys.handle(key, ctx) {
+                    Some(input) if input.command == Command::Escape && normal && !pending => {
                         self.modals.push(Modal::CloseComment);
                         false
                     }
-                    Some(input) => editor.input(input),
+                    Some(input) => editor.input(input, &mut self.registers),
                     None => false,
                 }
             }

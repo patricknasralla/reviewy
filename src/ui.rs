@@ -6,6 +6,8 @@ pub mod explorer;
 pub mod modals;
 pub mod status;
 
+use std::ops::Range;
+
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Position, Rect};
@@ -15,6 +17,7 @@ use ratatui::widgets::Block;
 use crate::app::App;
 use crate::app::state::Mode;
 use crate::highlight::Theme;
+use crate::vim::wrap;
 
 pub fn draw(frame: &mut Frame, app: &App) {
     let area = frame.area();
@@ -49,6 +52,28 @@ pub fn draw(frame: &mut Frame, app: &App) {
 /// Drawn block cursor: the char keeps its cell, in the background color on the cursor color.
 fn cursor_block(buf: &mut Buffer, pos: Position, theme: &Theme) {
     buf[pos].set_fg(theme.background).set_bg(theme.cursor);
+}
+
+/// Cells of screen segment `seg` (bytes of `line`) covered by selected chars `sel`, clipped to
+/// `max` cells. An empty selected line still shows one cell.
+fn selection_cells(
+    line: &str,
+    seg: Range<usize>,
+    sel: Range<usize>,
+    max: u16,
+) -> Option<Range<u16>> {
+    let byte = |c: usize| line.char_indices().nth(c).map_or(line.len(), |(b, _)| b);
+    let (from, to) = (byte(sel.start).max(seg.start), byte(sel.end).min(seg.end));
+    let width = |s: &str| s.chars().map(wrap::char_width).sum::<usize>() as u16;
+    let cells = if line.is_empty() {
+        0..1
+    } else if from < to {
+        let x = width(&line[seg.start..from]);
+        x..x + width(&line[from..to])
+    } else {
+        return None;
+    };
+    Some(cells.start.min(max)..cells.end.min(max))
 }
 
 /// `width` × `height` rect centered in `area`, clamped to it.

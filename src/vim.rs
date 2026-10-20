@@ -2,4 +2,6 @@
 
 pub mod keys;
 pub mod motion;
+pub mod register;
+pub mod selection;
 pub mod wrap;

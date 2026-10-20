@@ -23,6 +23,7 @@ use crate::git::{ChangedFile, DiffTarget};
 use crate::highlight::{Highlighter, Theme};
 use crate::ui;
 use crate::vim::keys::{Context, KeyParser};
+use crate::vim::register::Registers;
 use state::{Modal, Mode, PendingOpen};
 use view::FileView;
 
@@ -51,6 +52,7 @@ pub struct App {
     pub dirty: bool,
     pub should_quit: bool,
     pub keys: KeyParser,
+    pub registers: Registers,
     /// Blink phase of the block cursor.
     pub cursor_on: bool,
     /// Next blink toggle.
@@ -93,6 +95,7 @@ impl App {
             dirty: true,
             should_quit: false,
             keys: KeyParser::default(),
+            registers: Registers::default(),
             cursor_on: true,
             blink_at: Instant::now(),
         }
@@ -137,11 +140,11 @@ impl App {
 
     /// When the block cursor next toggles; `None` while no block cursor is shown.
     pub fn next_blink(&self) -> Option<Instant> {
-        let editor_normal = matches!(
+        let editor_block = matches!(
             self.modals.last(),
-            Some(Modal::Editor(e)) if e.mode() == editor::Mode::Normal
+            Some(Modal::Editor(e)) if e.mode() != editor::Mode::Insert
         );
-        let shown = self.diff_focused() || editor_normal;
+        let shown = self.diff_focused() || editor_block;
         (self.config.ui.cursor_blink && shown).then_some(self.blink_at)
     }
 

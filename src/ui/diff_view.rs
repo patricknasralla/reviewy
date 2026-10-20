@@ -16,7 +16,7 @@ use crate::comments::model::Side;
 use crate::diff::model::{FileDiff, LineKind, SideText};
 use crate::highlight::Theme;
 use crate::highlight::highlighter::StyledSpan;
-use crate::vim::wrap;
+use crate::vim::{selection, wrap};
 
 /// Gutter cells besides the line number: leading space, change marker, comment slot, space.
 const GUTTER_EXTRA: u16 = 4;
@@ -105,19 +105,8 @@ struct Marks {
 fn marks(mode: Mode, view: &FileView, line: usize, show_cursor: bool) -> Marks {
     let cur = view.cursor.pos;
     let selection = match mode {
-        Mode::Visual { anchor } => {
-            let (a, b) = ((anchor.line, anchor.col), (cur.line, cur.col));
-            let (start, end) = (a.min(b), a.max(b));
-            (start.0..=end.0).contains(&line).then(|| {
-                let from = if line == start.0 { start.1 } else { 0 };
-                let to = if line == end.0 { end.1 + 1 } else { usize::MAX };
-                from..to
-            })
-        }
-        Mode::VisualLine { anchor } => {
-            let lines = anchor.line.min(cur.line)..=anchor.line.max(cur.line);
-            lines.contains(&line).then_some(0..usize::MAX)
-        }
+        Mode::Visual { anchor } => selection::line_cols(anchor, cur, false, line),
+        Mode::VisualLine { anchor } => selection::line_cols(anchor, cur, true, line),
         _ => None,
     };
     Marks {
@@ -195,8 +184,6 @@ impl Cell<'_> {
         }
 
         let line = &text.lines[i];
-        let byte = |c: usize| line.char_indices().nth(c).map_or(line.len(), |(b, _)| b);
-        let selection = marks.selection.map(|r| byte(r.start)..byte(r.end));
         let segments = if self.wrap {
             wrap::wrap_line(line, col.text)
         } else {
@@ -219,18 +206,10 @@ impl Cell<'_> {
                 token_tint,
             );
             buf.set_line(text_rect.x, y, &Line::from(spans), col.text);
-            if let Some(sel) = &selection {
-                let (from, to) = (sel.start.max(seg.start), sel.end.min(seg.end));
-                // An empty selected line still shows one selected cell.
-                let cells = if line.is_empty() {
-                    0..1
-                } else if from < to {
-                    let x = width(&line[seg.start..from]);
-                    x..x + width(&line[from..to])
-                } else {
-                    continue;
-                };
-                let cells = cells.start.min(col.text)..cells.end.min(col.text);
+            let sel = marks.selection.clone();
+            let cells =
+                sel.and_then(|sel| super::selection_cells(line, seg.clone(), sel, col.text));
+            if let Some(cells) = cells {
                 let rect = Rect::new(text_rect.x + cells.start, y, cells.len() as u16, 1);
                 buf.set_style(rect, selected);
             }

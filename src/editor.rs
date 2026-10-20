@@ -1,6 +1,7 @@
 //! Comment editor model: buffer, cursor, vim modes and soft-wrap layout.
 
 pub mod buffer;
+mod operator;
 
 use std::ops::Range;
 
@@ -9,13 +10,21 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::diff::align::expand_tabs;
 use crate::vim::keys::{At, Command, Input};
 use crate::vim::motion::{self, Cursor, MotionCtx, Pos, TextView};
-use crate::vim::wrap;
+use crate::vim::register::{Register, Registers};
+use crate::vim::{selection, wrap};
 use buffer::Buffer;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Normal,
     Insert,
+    /// Visual modes store where the selection started.
+    Visual {
+        anchor: Pos,
+    },
+    VisualLine {
+        anchor: Pos,
+    },
 }
 
 pub struct Editor {
@@ -66,20 +75,35 @@ impl Editor {
         self.settle();
     }
 
-    /// Applies a normal-mode command; returns whether the text changed.
-    pub fn input(&mut self, input: Input) -> bool {
+    /// Applies a normal- or visual-mode command; returns whether the text changed.
+    pub fn input(&mut self, input: Input, regs: &mut Registers) -> bool {
         let Pos { line, col } = self.cursor.pos;
         let len = self.buffer.len(line);
         let changed = match input.command {
             Command::Motion(m) => {
-                let ctx = MotionCtx {
-                    height: usize::from(self.height),
-                    wrap: Some(self.width),
-                };
-                self.cursor = motion::apply(m, input.count, self.cursor, &self.buffer, &ctx);
+                self.cursor = motion::apply(m, input.count, self.cursor, &self.buffer, &self.ctx());
                 self.scroll_to_cursor();
                 return false;
             }
+            Command::Visual | Command::VisualLine => {
+                let line_mode = input.command == Command::VisualLine;
+                let anchor = match self.mode {
+                    Mode::Visual { anchor } | Mode::VisualLine { anchor } => anchor,
+                    _ => self.cursor.pos,
+                };
+                self.mode = match (self.mode, line_mode) {
+                    (Mode::Visual { .. }, false) | (Mode::VisualLine { .. }, true) => Mode::Normal,
+                    (_, true) => Mode::VisualLine { anchor },
+                    (_, false) => Mode::Visual { anchor },
+                };
+                false
+            }
+            Command::Escape => {
+                self.mode = Mode::Normal;
+                false
+            }
+            Command::Operator { op, target } => self.operator(op, target, input.count, regs),
+            Command::Put { before } => self.put(before, input.count, regs),
             Command::Insert(at) => {
                 self.mode = Mode::Insert;
                 match at {
@@ -105,7 +129,16 @@ impl Editor {
                     col..(col + n).min(len)
                 };
                 self.cursor.pos.col = cols.start;
-                self.delete_cols(line, cols)
+                let at = |col| Pos { line, col };
+                let text = self.buffer.slice(at(cols.start)..at(cols.end));
+                let changed = self.delete_cols(line, cols);
+                if changed {
+                    regs.unnamed = Register {
+                        text,
+                        linewise: false,
+                    };
+                }
+                changed
             }
             _ => false,
         };
@@ -164,11 +197,25 @@ impl Editor {
         self.settle();
     }
 
-    /// Visible screen rows, from the scroll position down.
-    pub fn rows(&self) -> impl Iterator<Item = &str> {
-        (self.buffer.lines().iter())
-            .flat_map(|l| self.segments(l).into_iter().map(move |r| &l[r]))
+    /// Visible screen rows as (line, byte range in the line), from the scroll position down.
+    pub fn rows(&self) -> impl Iterator<Item = (usize, Range<usize>)> + '_ {
+        (0..self.buffer.line_count())
+            .flat_map(|i| (self.segments(self.buffer.line(i)).into_iter()).map(move |r| (i, r)))
             .skip(self.scroll)
+    }
+
+    pub fn line(&self, idx: usize) -> &str {
+        self.buffer.line(idx)
+    }
+
+    /// Selected chars of `line` in a visual mode; half-open, may extend past the line end.
+    pub fn selection_cols(&self, line: usize) -> Option<Range<usize>> {
+        let cur = self.cursor.pos;
+        match self.mode {
+            Mode::Visual { anchor } => selection::line_cols(anchor, cur, false, line),
+            Mode::VisualLine { anchor } => selection::line_cols(anchor, cur, true, line),
+            _ => None,
+        }
     }
 
     /// Cursor (row, column) within the text area, if it is in view.
@@ -176,6 +223,13 @@ impl Editor {
         let (seg, x) = self.locate();
         let row = (self.tops()[self.cursor.pos.line] + seg).checked_sub(self.scroll)?;
         (row < usize::from(self.height)).then_some((row as u16, x as u16))
+    }
+
+    fn ctx(&self) -> MotionCtx {
+        MotionCtx {
+            height: usize::from(self.height),
+            wrap: Some(self.width),
+        }
     }
 
     fn line_end(&self, line: usize) -> Pos {
@@ -190,8 +244,8 @@ impl Editor {
         let Pos { line, col } = self.cursor.pos;
         let len = self.buffer.len(line);
         let max = match self.mode {
-            Mode::Normal => len.saturating_sub(1),
             Mode::Insert => len,
+            _ => len.saturating_sub(1),
         };
         self.cursor.pos.col = col.min(max);
         self.cursor.want = self.locate().1;
@@ -336,7 +390,7 @@ mod tests {
     }
 
     fn cmd(e: &mut Editor, command: Command, count: Option<usize>) -> bool {
-        e.input(Input { command, count })
+        e.input(Input { command, count }, &mut Registers::default())
     }
 
     fn at(e: &Editor) -> (usize, usize) {
@@ -393,7 +447,7 @@ mod tests {
     #[test]
     fn opens_scrolled_to_the_top_when_the_body_fits() {
         let e = editor("a\nb\nc\n", 20, Mode::Insert);
-        assert_eq!(e.rows().next(), Some("a"));
+        assert_eq!(e.rows().next(), Some((0, 0..1)));
         assert_eq!(e.cursor_cell(), Some((3, 0)));
     }
 

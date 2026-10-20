@@ -34,10 +34,10 @@ Design principles:
 
 ### v1.1 (planned, design must not block these)
 
-- Modal (vim) editing in the comment editor, built on the shared vim engine: Normal/Insert modes and motions done (task 13); operators, register, visual mode (task 14) and undo (task 15) in progress.
+- Modal (vim) editing in the comment editor, built on the shared vim engine: Normal/Insert modes and motions (task 13), operators, register and visual mode (task 14) done; undo (task 15) in progress.
 - Picker for lines covered by multiple overlapping comments (model already supports overlap).
 - CLI arguments mirroring `git diff` (ranges, `--staged`, etc.). Argument scaffolding exists in v1 (§4); behavior **to be discussed**.
-- Yank selection to the system clipboard.
+- Yank selection to the system clipboard. The editor has an internal unnamed register (`vim/register.rs`); named registers and the clipboard build on it.
 - Configurable key bindings.
 - Search (`/`, `n`, `N`).
 
@@ -163,8 +163,10 @@ src/
     render_md.rs       preamble + markdown rendering
   vim.rs               declares submodules
   vim/
-    keys.rs            key/chord/count parser → vim::Command
+    keys.rs            key/chord/count/operator parser → vim::Command
     motion.rs          Motion enum, TextView trait, motion application
+    register.rs        Register, Registers (unnamed only), owned by App
+    selection.rs       visual selection bounds and per-line ranges (diff view and editor)
     wrap.rs            soft-wrap layout (shared by diff view, editor, gj/gk)
   app.rs               App struct; declares submodules
   app/
@@ -176,7 +178,8 @@ src/
     persist.rs         load existing (keep/discard) and App::save
   editor.rs            Editor: comment editor model, vim modes, key handling, wrap layout; declares submodules
   editor/
-    buffer.rs          Buffer: lines with position-based insert/delete, TextView
+    buffer.rs          Buffer: lines with position-based insert/delete/slice, TextView
+    operator.rs        operator spans (motion/line/selection) and d/c/y, p/P
   ui.rs                declares submodules; top-level draw(), drawn block cursor
   ui/
     explorer.rs        explorer overlay
@@ -472,16 +475,24 @@ For "Load existing", the question is "Found N comments from a previous session (
 ### Comment editor
 
 - Modal box over the diff view, titled e.g. `Comment - src/foo.rs:42-45 (new)`.
-- Own model (`src/editor.rs`, `Buffer` in `editor/buffer.rs`) drawn by `ui/editor.rs`; soft-wrapped via `vim/wrap.rs`. A line exactly filling the width gets an empty trailing screen row, so a cursor at its end stays in the box. Normal mode shows the drawn block cursor (blinking as in the diff view); Insert mode shows the real terminal cursor: a bar, set once at startup (blinking, or steady with `cursor_blink = false`) and colored with the theme cursor color via OSC 12. The terminal's own shape and color are restored on exit (including the panic hook) with `DefaultUserShape` and OSC 112.
+- Own model (`src/editor.rs`, `Buffer` in `editor/buffer.rs`) drawn by `ui/editor.rs`; soft-wrapped via `vim/wrap.rs`. A line exactly filling the width gets an empty trailing screen row, so a cursor at its end stays in the box. Normal and visual modes show the drawn block cursor (blinking as in the diff view) and visual selections use the selection color (§9); Insert mode shows the real terminal cursor: a bar, set once at startup (blinking, or steady with `cursor_blink = false`) and colored with the theme cursor color via OSC 12. The terminal's own shape and color are restored on exit (including the panic hook) with `DefaultUserShape` and OSC 112.
 - Lives on the modal stack. A new comment opens in Insert mode with the cursor at the end of the body (for a prefilled selection: the empty line below the fence); an existing comment opens in Normal mode at the end of the body.
-- **Normal mode** goes through the key parser (`Context::EditorNormal`): the shared motions (`h j k l w b e 0 $ gg G gj gk`, arrows, `Ctrl-d`/`Ctrl-u`; `j`/`k` by screen row, `gj`/`gk` by line), `i a I A o O` (counts ignored), `x`/`X` (with counts; never join lines). Cursor col `<= len - 1`.
+- **Normal mode** goes through the key parser (`Context::EditorNormal`): the shared motions (`h j k l w b e 0 $ gg G gj gk`, arrows, `Ctrl-d`/`Ctrl-u`; `j`/`k` by screen row, `gj`/`gk` by line), `i a I A o O` (counts ignored), `x`/`X` (with counts; never join lines), operators and `v`/`V` (below). Cursor col `<= len - 1`, also in visual modes.
 - **Insert mode** bypasses the parser: typing, Enter (newline), Backspace, Delete, arrows (Up/Down by screen row), Home/End, PageUp/PageDown. Tab and Ctrl-h do nothing. Cursor col `<= len`. Esc returns to Normal, moving the cursor one column left (not past col 0).
 - Bracketed paste (`Event::Paste`) inserts at the cursor in any mode, leaving the mode unchanged; line breaks are normalized to `\n` and tabs expanded to spaces (`tab_width`, per pasted line): a raw tab has no display width.
 - Edits update the in-memory comment immediately (no manual save).
 - Esc in Normal mode with no pending count/chord opens the "close comment" confirmation (protects against habitual Esc taps); with pending input it only clears it.
 - `Ctrl-q` (any mode) opens "save comment" (Enter save, `d` delete, Esc edit); an empty/whitespace body is closed (and so removed) without asking. Quit is ignored while the editor is on the modal stack, so quitting from the editor takes a second `Ctrl-q`.
 - On close, a comment whose body is empty/whitespace is removed from the model (new or existing).
-- Operators, register and visual mode: task 14. Undo: task 15.
+- **Operators** (Normal, `Context::EditorNormal`): `d`/`c`/`y` + motion, doubled for whole lines (`dd cc yy`, count = lines), `D`/`C`/`Y` (to line end; `Y` as in Neovim), `p`/`P` (with counts). Counts multiply (`2d3w` = `d6w`); `0` right after an operator is a motion (`d0`), a count typed after it continues (`d10w`); `g` chords work inside (`dgg`).
+  - Motion kinds: exclusive `h l w b 0`; inclusive `e $`; linewise `j k gj gk gg G Ctrl-d Ctrl-u`, always on logical lines (`dj` deletes two lines even when wrapped).
+  - A forward exclusive motion that can't move (`dl`/`x` on the last char, `dw` on the buffer's last word) ends at the line length, never the line break; a backward one that can't move is a no-op. `dw` landing on a later line at or before its first non-blank stops at the end of the previous line.
+  - `cw` on a non-blank acts as `ce`, on a word's last char it changes just that char; on whitespace it acts as `dw` then insert.
+  - Deleting every line leaves one empty line. `cc` / linewise `c` leaves one empty line (no auto-indent). Change always ends in Insert, even with nothing to change (`C` on an empty line).
+  - Cursor after: delete -> range start (linewise: first non-blank of the line now there); yank -> range start (`yy` stays); change -> range start, Insert; charwise put -> last put char; linewise put -> first non-blank of the first put line.
+- **Register:** one unnamed register owned by `App`, so it is shared across comments and survives closing the editor. Every `d c x X y` writes it; text has no trailing line break, `linewise` marks whole-line text.
+- **Visual / visual-line** (`v`/`V` from Normal, `Context::EditorVisual`): motions extend the selection; `v`/`V` toggle as in the diff view; Esc -> Normal (never the close modal). `d`/`x` delete, `c` change, `y` yank the selection (charwise inclusive of the cursor char; whole lines in visual-line); `D X C Y` act on the lines the selection covers. `p` replaces the selection with the register without changing it; if the register and selection kinds differ, the register text is inserted as plain chars where the selection was. Operators return to Normal (Insert for change). Status line: `VISUAL` / `V-LINE`.
+- Undo: task 15.
 
 ## 11. Input and modes
 
@@ -537,7 +548,7 @@ All normal-mode motions extend the selection. Selections cannot cross columns: `
 
 ### Vim engine (`src/vim/`)
 
-- `keys.rs`: stateful parser over key events. Accumulates an optional count and multi-key chords (`gg`, `gn`, `gp`) and emits `vim::Input { command: Command, count: Option<usize> }` (`Command`: motion, mode switches, operators such as "comment" / "delete comment"; `count` is `None` when none was typed, so `G` ≠ `1G`). No chord timeout; Esc clears pending input. Counts are supported (`5j`, `3w`). One parser with a key table per `Context` (`Diff`, `EditorNormal`, `Modal`; `Modal` has no counts or chords), built from shared slices (`MOTIONS`, `G_MOTIONS`) plus per-context ones; keys map to `Command`s through them so configurable bindings (v1.1+) are a table swap. Modals see `Command::Delete` for `d`; only "save comment" acts on it. Arrow keys alias `hjkl`; Ctrl-Left/Ctrl-Right alias Ctrl-h/Ctrl-l. Ctrl-h is its own key (crossterm reports `0x08` as Ctrl+`h`, `0x7F` as Backspace), never Backspace.
+- `keys.rs`: stateful parser over key events. Accumulates an optional count and multi-key chords (`gg`, `gn`, `gp`) and emits `vim::Input { command: Command, count: Option<usize> }` (`Command`: motion, mode switches, operators such as "comment" / "delete comment"; `count` is `None` when none was typed, so `G` ≠ `1G`). No chord timeout; Esc clears pending input. Counts are supported (`5j`, `3w`). Operator-pending state (`d`/`c`/`y` in `EditorNormal`) sits next to the count and `g` chord state and emits `Command::Operator { op, target }`. One parser with a key table per `Context` (`Diff`, `EditorNormal`, `EditorVisual`, `Modal`; `Modal` has no counts or chords), built from shared slices (`MOTIONS`, `G_MOTIONS`) plus per-context ones; keys map to `Command`s through them so configurable bindings (v1.1+) are a table swap. Modals see `Command::Delete` for `d`; only "save comment" acts on it. Arrow keys alias `hjkl`; Ctrl-Left/Ctrl-Right alias Ctrl-h/Ctrl-l. Ctrl-h is its own key (crossterm reports `0x08` as Ctrl+`h`, `0x7F` as Backspace), never Backspace.
 - `vim/` has no dependency on `app/`. The app maps `vim::Command` → `app::Action` in `app/actions.rs` (context-dependent, e.g. Enter in Normal mode → edit the line's comment or create one). The comment editor (`Editor::input`) consumes the same `Command`s in Normal mode.
 - `motion.rs`: `Motion` enum (`Left`, `Right`, `Down`, `Up`, `ScreenDown`, `ScreenUp`, `WordForward`, `WordBackward`, `WordEnd`, `LineStart`, `LineEnd`, `FileStart`, `FileEnd`, `HalfPageDown`, `HalfPageUp`, …) applied over:
   ```rust

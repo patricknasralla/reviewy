@@ -1,6 +1,6 @@
 //! Editable text: lines of chars with position-based edits.
 
-use std::ops::Range;
+use std::ops::{Range, RangeInclusive};
 
 use crate::vim::motion::{Pos, TextView};
 
@@ -66,6 +66,26 @@ impl Buffer {
         }
         self.lines[start.line].push_str(&tail);
         removed
+    }
+
+    /// The text `delete(range)` would remove.
+    pub fn slice(&self, range: Range<Pos>) -> String {
+        let Range { start, end } = range;
+        let lines = &self.lines[start.line..=end.line];
+        let mut text = lines.join("\n");
+        let last_start = text.len() - lines[lines.len() - 1].len();
+        text.truncate(last_start + byte(&lines[lines.len() - 1], end.col));
+        text.drain(..byte(&lines[0], start.col));
+        text
+    }
+
+    /// Removes whole lines, leaving at least one (empty) line; returns them joined by `\n`.
+    pub fn delete_lines(&mut self, lines: RangeInclusive<usize>) -> String {
+        let removed: Vec<String> = self.lines.drain(lines).collect();
+        if self.lines.is_empty() {
+            self.lines.push(String::new());
+        }
+        removed.join("\n")
     }
 }
 

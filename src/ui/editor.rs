@@ -40,8 +40,22 @@ pub fn draw(
     frame.render_widget(Clear, rect);
     frame.render_widget(block, rect);
     let buf = frame.buffer_mut();
-    for (y, text) in (inner.y..inner.bottom()).zip(editor.rows()) {
-        buf.set_stringn(inner.x, y, text, usize::from(inner.width), Style::new());
+    let selected = Style::new().bg(theme.selection);
+    for (y, (i, seg)) in (inner.y..inner.bottom()).zip(editor.rows()) {
+        let line = editor.line(i);
+        buf.set_stringn(
+            inner.x,
+            y,
+            &line[seg.clone()],
+            usize::from(inner.width),
+            Style::new(),
+        );
+        let sel = editor.selection_cols(i);
+        let cells = sel.and_then(|sel| super::selection_cells(line, seg, sel, inner.width));
+        if let Some(cells) = cells {
+            let rect = Rect::new(inner.x + cells.start, y, cells.len() as u16, 1);
+            buf.set_style(rect, selected);
+        }
     }
     let Some((row, x)) = editor.cursor_cell().filter(|_| focused) else {
         return;
@@ -49,7 +63,7 @@ pub fn draw(
     let pos = Position::new(inner.x + x, inner.y + row);
     match editor.mode() {
         Mode::Insert => frame.set_cursor_position(pos),
-        Mode::Normal if cursor_on => super::cursor_block(frame.buffer_mut(), pos, theme),
-        Mode::Normal => {}
+        _ if cursor_on => super::cursor_block(frame.buffer_mut(), pos, theme),
+        _ => {}
     }
 }

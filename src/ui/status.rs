@@ -15,6 +15,8 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
         _ if let Some(e) = app.editor() => match e.mode() {
             editor::Mode::Normal => "NORMAL",
             editor::Mode::Insert => "INSERT",
+            editor::Mode::Visual { .. } => "VISUAL",
+            editor::Mode::VisualLine { .. } => "V-LINE",
         },
         Mode::Explorer => "EXPLORER",
         Mode::Normal => "NORMAL",

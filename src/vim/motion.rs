@@ -183,6 +183,11 @@ enum Class {
     Eol,
 }
 
+/// Whether adjacent chars `a` and `b` are in the same vim word (same class).
+pub fn same_word(a: char, b: char) -> bool {
+    class(a) == class(b)
+}
+
 fn class(c: char) -> Class {
     if c.is_whitespace() {
         Class::Blank

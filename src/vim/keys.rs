@@ -27,6 +27,33 @@ pub enum Command {
     },
     /// `d` in a modal.
     Delete,
+    Operator {
+        op: Op,
+        target: Target,
+    },
+    /// `p` (`before: false`) or `P`; in visual mode, replace the selection.
+    Put {
+        before: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Op {
+    Delete,
+    Change,
+    Yank,
+}
+
+/// What an operator acts on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Target {
+    Motion(Motion),
+    /// `dd`, `cc`, `yy`.
+    Line,
+    /// The visual selection.
+    Selection,
+    /// The lines the visual selection covers.
+    SelectionLines,
 }
 
 /// Where an insert-mode entry puts the cursor: `i a I A o O`.
@@ -45,6 +72,7 @@ pub enum At {
 pub enum Context {
     Diff,
     EditorNormal,
+    EditorVisual,
     /// A confirmation modal: no counts or chords.
     Modal,
 }
@@ -115,9 +143,56 @@ const EDITOR: &[(Key, Command)] = &[
     (Key::Char('O'), Command::Insert(At::Above)),
     (Key::Char('x'), Command::DeleteChar { before: false }),
     (Key::Char('X'), Command::DeleteChar { before: true }),
+    (Key::Char('D'), line_end(Op::Delete)),
+    (Key::Char('C'), line_end(Op::Change)),
+    (Key::Char('Y'), line_end(Op::Yank)),
+    (Key::Char('p'), Command::Put { before: false }),
+    (Key::Char('P'), Command::Put { before: true }),
+    (Key::Char('v'), Command::Visual),
+    (Key::Char('V'), Command::VisualLine),
     (Key::Code(KeyCode::Esc), Command::Escape),
     (Key::Ctrl('q'), Command::Quit),
 ];
+
+const VISUAL: &[(Key, Command)] = &[
+    (Key::Char('v'), Command::Visual),
+    (Key::Char('V'), Command::VisualLine),
+    (Key::Char('d'), selection(Op::Delete)),
+    (Key::Char('x'), selection(Op::Delete)),
+    (Key::Char('c'), selection(Op::Change)),
+    (Key::Char('y'), selection(Op::Yank)),
+    (Key::Char('D'), selection_lines(Op::Delete)),
+    (Key::Char('X'), selection_lines(Op::Delete)),
+    (Key::Char('C'), selection_lines(Op::Change)),
+    (Key::Char('Y'), selection_lines(Op::Yank)),
+    (Key::Char('p'), Command::Put { before: false }),
+    (Key::Code(KeyCode::Esc), Command::Escape),
+    (Key::Ctrl('q'), Command::Quit),
+];
+
+/// Operator keys: wait for a motion, or the same key again for whole lines.
+const OPS: &[(char, Op)] = &[('d', Op::Delete), ('c', Op::Change), ('y', Op::Yank)];
+
+const fn line_end(op: Op) -> Command {
+    Command::Operator {
+        op,
+        target: Target::Motion(Motion::LineEnd),
+    }
+}
+
+const fn selection(op: Op) -> Command {
+    Command::Operator {
+        op,
+        target: Target::Selection,
+    }
+}
+
+const fn selection_lines(op: Op) -> Command {
+    Command::Operator {
+        op,
+        target: Target::SelectionLines,
+    }
+}
 
 const MODAL: &[(Key, Command)] = &[
     (Key::Code(KeyCode::Enter), Command::Confirm),
@@ -142,6 +217,7 @@ fn tables(ctx: Context) -> (&'static [Table<Key>], &'static [Table<char>]) {
     match ctx {
         Context::Diff => (&[MOTIONS, DIFF], &[G_MOTIONS, G_DIFF]),
         Context::EditorNormal => (&[MOTIONS, EDITOR], &[G_MOTIONS]),
+        Context::EditorVisual => (&[MOTIONS, VISUAL], &[G_MOTIONS]),
         Context::Modal => (&[MODAL], &[]),
     }
 }
@@ -154,10 +230,17 @@ fn find<K: PartialEq + Copy>(tables: &[&[(K, Command)]], key: K) -> Option<Comma
         .map(|&(_, c)| c)
 }
 
+/// Product of two optional counts; `None` when neither was typed.
+fn mul(a: Option<usize>, b: Option<usize>) -> Option<usize> {
+    (a.is_some() || b.is_some()).then(|| (a.unwrap_or(1) * b.unwrap_or(1)).min(MAX_COUNT))
+}
+
 #[derive(Debug, Default)]
 pub struct KeyParser {
     count: Option<usize>,
     g: bool,
+    /// Pending operator and the count typed before it.
+    op: Option<(Op, Option<usize>)>,
 }
 
 impl KeyParser {
@@ -202,21 +285,68 @@ impl KeyParser {
                 self.g = true;
                 None
             }
+            Key::Char(c)
+                if ctx == Context::EditorNormal
+                    && let Some(op) = op_key(c) =>
+            {
+                match self.op {
+                    None => {
+                        self.op = Some((op, self.count.take()));
+                        None
+                    }
+                    Some((pending, before)) if pending == op => {
+                        let count = mul(before, self.count);
+                        *self = Self::default();
+                        Some(Input {
+                            command: Command::Operator {
+                                op,
+                                target: Target::Line,
+                            },
+                            count,
+                        })
+                    }
+                    Some(_) => self.emit(None),
+                }
+            }
             _ => self.emit(command),
         }
     }
 
-    /// Pending count and chord prefix, e.g. `5g`.
+    /// Pending counts, operator and chord prefix, e.g. `2d3g`.
     pub fn pending(&self) -> String {
-        let count = self.count.map(|c| c.to_string()).unwrap_or_default();
-        format!("{count}{}", if self.g { "g" } else { "" })
+        let num = |n: Option<usize>| n.map(|c| c.to_string()).unwrap_or_default();
+        let op = self.op.map_or(String::new(), |(op, before)| {
+            let key = OPS.iter().find(|&&(_, o)| o == op).unwrap().0;
+            format!("{}{key}", num(before))
+        });
+        format!("{op}{}{}", num(self.count), if self.g { "g" } else { "" })
     }
 
     /// Emits `command` with the pending count and clears pending state; `None` just clears it.
+    /// With an operator pending, a motion becomes its target and anything else cancels.
     fn emit(&mut self, command: Option<Command>) -> Option<Input> {
-        let count = std::mem::take(self).count;
-        command.map(|command| Input { command, count })
+        let state = std::mem::take(self);
+        let Some((op, before)) = state.op else {
+            return command.map(|command| Input {
+                command,
+                count: state.count,
+            });
+        };
+        match command {
+            Some(Command::Motion(m)) => Some(Input {
+                command: Command::Operator {
+                    op,
+                    target: Target::Motion(m),
+                },
+                count: mul(before, state.count),
+            }),
+            _ => None,
+        }
     }
+}
+
+fn op_key(c: char) -> Option<Op> {
+    OPS.iter().find(|&&(k, _)| k == c).map(|&(_, op)| op)
 }
 
 #[cfg(test)]
@@ -299,6 +429,59 @@ mod tests {
                 ]
             );
         }
+    }
+
+    fn feed_in(p: &mut KeyParser, keys: &str, ctx: Context) -> Vec<Input> {
+        keys.chars()
+            .filter_map(|c| p.handle(key(KeyCode::Char(c)), ctx))
+            .collect()
+    }
+
+    #[test]
+    fn operators_and_counts() {
+        use Context::{EditorNormal, EditorVisual};
+        let mut p = KeyParser::default();
+        let op = |op, target| Command::Operator { op, target };
+        let del = |m| op(Op::Delete, Target::Motion(m));
+        assert_eq!(
+            feed_in(&mut p, "2d3w", EditorNormal),
+            [input(del(Motion::WordForward), Some(6))]
+        );
+        assert_eq!(
+            feed_in(&mut p, "dd", EditorNormal),
+            [input(op(Op::Delete, Target::Line), None)]
+        );
+        // `0` after an operator is a motion, but continues a count typed after it.
+        assert_eq!(
+            feed_in(&mut p, "d0", EditorNormal),
+            [input(del(Motion::LineStart), None)]
+        );
+        assert_eq!(
+            feed_in(&mut p, "d10w", EditorNormal),
+            [input(del(Motion::WordForward), Some(10))]
+        );
+        assert_eq!(
+            feed_in(&mut p, "dgg", EditorNormal),
+            [input(del(Motion::FileStart), None)]
+        );
+        assert_eq!(
+            feed_in(&mut p, "d", EditorVisual),
+            [input(op(Op::Delete, Target::Selection), None)]
+        );
+    }
+
+    #[test]
+    fn escape_cancels_operator() {
+        let mut p = KeyParser::default();
+        feed_in(&mut p, "2d3", Context::EditorNormal);
+        assert_eq!(p.pending(), "2d3");
+        let esc = p.handle(key(KeyCode::Esc), Context::EditorNormal);
+        assert_eq!(esc, Some(input(Command::Escape, None)));
+        assert_eq!(p.pending(), "");
+        assert_eq!(
+            feed_in(&mut p, "w", Context::EditorNormal),
+            [input(Command::Motion(Motion::WordForward), None)]
+        );
     }
 
     #[test]
