@@ -30,6 +30,8 @@ pub struct UiConfig {
     pub theme_variant: Option<String>,
     pub wrap: bool,
     pub tab_width: usize,
+    pub cursor_blink: bool,
+    pub cursor_blink_ms: u64,
     pub tint: Tint,
 }
 

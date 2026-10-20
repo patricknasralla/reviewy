@@ -90,13 +90,14 @@ reviewy [OPTIONS] [DIFF_ARGS]...
 ```
 loop {
     if terminate.load() { app.save()?; break; }
-    if event::poll(250 ms)? {
+    if event::poll(min(250 ms, time to next blink))? {
         match event::read()? {
             Key(key) => app.handle_key(key),   // editor on top: editor_key; else keys.handle → vim::Input → map → Action → apply
             Paste(text) => app.paste(&text),   // only when the editor is on top
             Resize(w, h) => app.resize(w, h),
         }
     }
+    app.blink(now);                            // toggles the block cursor when due
     if app.dirty { terminal.draw(|f| ui::draw(f, &app))?; app.dirty = false; }
     if app.pending.is_some() { app.finish_open(); terminal.draw(…)?; }   // "Diffing…" is drawn first
     if app.should_quit { app.save()?; break; }
@@ -104,7 +105,7 @@ loop {
 ```
 
 - Redraw only when state changed (or on resize).
-- `poll` timeout (~250 ms) bounds signal-handling latency.
+- `poll` timeout (~250 ms) bounds signal-handling latency. While the block cursor is shown it is shortened to the next blink toggle, so blinks happen at `cursor_blink_ms`, not on 250 ms ticks.
 
 ### Startup sequence
 
@@ -397,10 +398,11 @@ Capture → theme key mapping:
 ### Themes
 
 - Format: Zed theme family JSON (`themes[]` with `name`, `appearance`, `style`, `style.syntax`).
-- Used keys (minimum): `editor.background`, `editor.foreground`, `editor.line_number`, `editor.active_line.background`, `syntax.*`, optional `players[0].selection`, and diff colors from `version_control.added|deleted|modified`, falling back to `created|deleted|modified`.
+- Used keys (minimum): `editor.background`, `editor.foreground`, `editor.line_number`, `editor.active_line.background`, `syntax.*`, optional `players[0].selection` and `players[0].cursor`, and diff colors from `version_control.added|deleted|modified`, falling back to `created|deleted|modified`.
 - `#RRGGBBAA` colors are alpha-blended onto `editor.background` at load time (terminals have no alpha).
 - Changed **lines** get a low-intensity tint of the added/deleted color; changed **tokens** (difft spans) get a stronger tint. Strengths are the blend alphas `ui.tint.line` / `ui.tint.token` (§13), applied when the theme is resolved.
 - Visual selections use `players[0].selection`; without it, `editor.foreground` blended onto `editor.active_line.background` at `ui.tint.selection`.
+- The block cursor uses `players[0].cursor`; without it, `editor.foreground`. The text under it is drawn in `editor.background`.
 - `font_style: italic` and `font_weight >= 700` map to italic/bold modifiers.
 - Color depth: 24-bit truecolor only. No 256-color fallback is planned.
 
@@ -437,7 +439,7 @@ Bundled: `src/defaults/tokyo-night.json`, compiled in via `include_str!` in `src
 - Two equal columns: old (left), new (right). Added files show an empty left column; deleted files an empty right column.
 - Gutter per column: line number, change marker (`+` / `-` / `~`), comment marker (e.g. `●`) on the side the comment was made on.
 - Active column is indicated by its line numbers (`editor.foreground`; the other column uses `editor.line_number`).
-- Cursor line: `active_line` background on the active column; the text cursor is a reversed cell; visual selections use the selection color (§9), drawn over all other backgrounds.
+- Cursor line: `active_line` background on the active column; visual selections use the selection color (§9), drawn over all other backgrounds. The text cursor is a drawn block (§9 cursor color) over everything, shown only while the diff view has focus (no explorer, no modal). It blinks every `cursor_blink_ms` and turns solid again on any key or paste.
 - On first open, the cursor is on the first non-blank char of the first hunk (as `]` from the top; a file starting with a pure deletion opens on the old column). Reopening a file restores its cursor and scroll.
 - Vertical scroll is per screen line, so a wrapped row taller than the viewport scrolls by segment.
 - **Wrapping** (default on, `wrap` in config): each aligned row's height is the max of both sides' wrapped heights; the shorter side is padded. With `wrap = false`, lines are clipped and both columns scroll horizontally together to keep the text cursor visible.
@@ -464,7 +466,7 @@ For "Load existing", the question is "Found N comments from a previous session (
 ### Comment editor
 
 - Modal box over the diff view, titled e.g. `Comment - src/foo.rs:42-45 (new)`.
-- Own widget (`ui/editor.rs`): `Vec<String>` buffer, soft-wrapped via `vim/wrap.rs`. A line exactly filling the width gets an empty trailing screen row, so a cursor at its end stays in the box. Real terminal cursor.
+- Own widget (`ui/editor.rs`): `Vec<String>` buffer, soft-wrapped via `vim/wrap.rs`. A line exactly filling the width gets an empty trailing screen row, so a cursor at its end stays in the box. Real terminal cursor: a bar, set once at startup (blinking, or steady with `cursor_blink = false`) and colored with the theme cursor color via OSC 12. The terminal's own shape and color are restored on exit (including the panic hook) with `DefaultUserShape` and OSC 112.
 - Lives on the modal stack; keys bypass the vim key parser while it is the top modal. `Ctrl-q` still opens the quit modal.
 - v1 is insert-only: typing, Enter (newline), Backspace, Delete, arrows (Up/Down by screen row), Home/End, PageUp/PageDown. Tab and Ctrl-h do nothing. Bracketed paste (`Event::Paste`) inserts the text with line breaks normalized to `\n` and tabs expanded to spaces (`tab_width`, per pasted line): a raw tab has no display width.
 - Edits update the in-memory comment immediately (no manual save).
@@ -683,6 +685,8 @@ theme = "Tokyo Night Moon"           # variant name, or path to a theme JSON (re
 # theme_variant = "Tokyo Night Moon" # required only when `theme` is a path
 wrap = true
 tab_width = 4
+cursor_blink = true                  # block cursor blinks; terminal bar blinks (else steady)
+cursor_blink_ms = 500                # block cursor toggle interval
 
 [ui.tint]                            # 0-1: added/deleted color blended onto the background
 line = 0.02                          # changed lines

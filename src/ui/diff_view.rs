@@ -4,8 +4,8 @@ use std::ops::Range;
 
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::layout::{Position, Rect};
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 
 use crate::app::App;
@@ -49,6 +49,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
     let diff = &view.diff;
     let tops = view.tops();
     let cols = columns(diff, area.width);
+    let show_cursor = app.diff_focused() && app.cursor_on;
     let xs = [area.x, area.x + area.width / 2];
     let buf = frame.buffer_mut();
     let first = tops.partition_point(|&t| t <= view.scroll) - 1;
@@ -79,7 +80,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
                 let marks = Marks {
                     comment,
                     ..if active {
-                        marks(app.mode, view, line)
+                        marks(app.mode, view, line, show_cursor)
                     } else {
                         Marks::default()
                     }
@@ -101,7 +102,7 @@ struct Marks {
     cursor: Option<usize>,
 }
 
-fn marks(mode: Mode, view: &FileView, line: usize) -> Marks {
+fn marks(mode: Mode, view: &FileView, line: usize, show_cursor: bool) -> Marks {
     let cur = view.cursor.pos;
     let selection = match mode {
         Mode::Visual { anchor } => {
@@ -122,7 +123,7 @@ fn marks(mode: Mode, view: &FileView, line: usize) -> Marks {
     Marks {
         comment: false,
         selection,
-        cursor: (cur.line == line).then_some(cur.col),
+        cursor: (show_cursor && cur.line == line).then_some(cur.col),
     }
 }
 
@@ -246,8 +247,8 @@ impl Cell<'_> {
                 )
             };
             if visible.contains(&seg) && x < usize::from(col.text) {
-                let pos = (text_rect.x + x as u16, rect.y + (seg - self.skip) as u16);
-                buf[pos].set_style(Style::new().add_modifier(Modifier::REVERSED));
+                let pos = Position::new(text_rect.x + x as u16, rect.y + (seg - self.skip) as u16);
+                super::cursor_block(buf, pos, theme);
             }
         }
     }

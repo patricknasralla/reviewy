@@ -48,7 +48,7 @@ Steps when given a task file:
 4. Code can be written **when plan is approved**. Code should be written in new branch. If work spreads over multiple tasks, these should be separate commits in this branch.
 5. Developer will review code written and comment on changes using Reviewy. Read comments md document in the `.reviewy` directory and respond as per document.
 6. Once dev happy, perform handoff procedure as outlined below.
-7. Dev will authorize commit. Each task should be 1 commit.
+7. Dev will authorize commit. Each task should be 1 commit. Conventional commit messages (`feat(git): …`), keep them as brief as possible.
 
 ## Rules for every task
 
@@ -58,7 +58,6 @@ Steps when given a task file:
 - **Scope:** do only your task. Don't build ahead for later tasks beyond the interfaces your task file asks for. Don't refactor earlier modules unless your task needs it; if you do, say so in your handoff notes.
 - **Tests:** write only the tests your task lists. No speculative or exhaustive tests. A test exists to pin down behavior that is easy to get wrong.
 - **No async, no extra dependencies** beyond §15 without a note explaining why.
-- **Commits:** one per task, straight to `main`, only when the developer authorizes (Workflow step 8). Conventional commit messages (`feat(git): …`).
 
 ## Handoff
 

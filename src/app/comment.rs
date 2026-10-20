@@ -75,6 +75,7 @@ impl App {
 
     /// Bracketed paste; ignored unless the editor is the top modal.
     pub fn paste(&mut self, text: &str) {
+        self.reset_blink();
         if let Some(Modal::Editor(editor)) = self.modals.last_mut() {
             editor.paste(text, self.config.ui.tab_width);
             self.sync_body();

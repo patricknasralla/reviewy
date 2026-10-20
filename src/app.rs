@@ -9,6 +9,7 @@ pub mod view;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use crossterm::event::KeyEvent;
 use ratatui::layout::Rect;
@@ -49,6 +50,10 @@ pub struct App {
     pub dirty: bool,
     pub should_quit: bool,
     pub keys: KeyParser,
+    /// Blink phase of the block cursor.
+    pub cursor_on: bool,
+    /// Next blink toggle.
+    blink_at: Instant,
     engine: Box<dyn DiffEngine>,
 }
 
@@ -87,10 +92,13 @@ impl App {
             dirty: true,
             should_quit: false,
             keys: KeyParser::default(),
+            cursor_on: true,
+            blink_at: Instant::now(),
         }
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) {
+        self.reset_blink();
         self.status = None;
         if matches!(self.modals.last(), Some(Modal::Editor(_))) {
             self.editor_key(key);
@@ -112,6 +120,34 @@ impl App {
 
     pub fn view(&self) -> Option<&FileView> {
         self.views.get(&self.current_file()?.path)
+    }
+
+    /// True when the diff view takes input: no explorer, no modal.
+    pub fn diff_focused(&self) -> bool {
+        self.mode != Mode::Explorer && self.modals.is_empty()
+    }
+
+    /// When the block cursor next toggles; `None` while no block cursor is shown.
+    pub fn next_blink(&self) -> Option<Instant> {
+        (self.config.ui.cursor_blink && self.diff_focused()).then_some(self.blink_at)
+    }
+
+    pub fn blink(&mut self, now: Instant) {
+        if self.next_blink().is_some_and(|at| at <= now) {
+            self.cursor_on = !self.cursor_on;
+            self.blink_at = now + self.blink_interval();
+            self.dirty = true;
+        }
+    }
+
+    /// Shows the block cursor and restarts its blink interval.
+    fn reset_blink(&mut self) {
+        self.cursor_on = true;
+        self.blink_at = Instant::now() + self.blink_interval();
+    }
+
+    fn blink_interval(&self) -> Duration {
+        Duration::from_millis(self.config.ui.cursor_blink_ms)
     }
 
     /// True while the comment editor is open, even under another modal.

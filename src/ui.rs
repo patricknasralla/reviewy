@@ -7,12 +7,14 @@ pub mod modals;
 pub mod status;
 
 use ratatui::Frame;
-use ratatui::layout::Rect;
+use ratatui::buffer::Buffer;
+use ratatui::layout::{Position, Rect};
 use ratatui::style::Style;
 use ratatui::widgets::Block;
 
 use crate::app::App;
 use crate::app::state::Mode;
+use crate::highlight::Theme;
 
 pub fn draw(frame: &mut Frame, app: &App) {
     let area = frame.area();
@@ -43,6 +45,11 @@ pub fn draw(frame: &mut Frame, app: &App) {
     status::draw(frame, status, app);
 }
 
+/// Drawn block cursor: the char keeps its cell, in the background color on the cursor color.
+fn cursor_block(buf: &mut Buffer, pos: Position, theme: &Theme) {
+    buf[pos].set_fg(theme.background).set_bg(theme.cursor);
+}
+
 /// `width` × `height` rect centered in `area`, clamped to it.
 fn centered(area: Rect, width: u16, height: u16) -> Rect {
     let (width, height) = (width.min(area.width), height.min(area.height));
@@ -61,7 +68,6 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEvent};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
-    use ratatui::style::Modifier;
 
     use super::*;
     use crate::app::state::{Modal, PendingOpen};
@@ -172,9 +178,11 @@ mod tests {
         let buf = backend.buffer();
         assert_eq!(buf[(49, 1)].bg, app.theme.selection);
         assert_eq!(buf[(45, 2)].bg, app.theme.selection);
-        assert_eq!(buf[(51, 2)].bg, app.theme.selection);
+        assert_eq!(buf[(50, 2)].bg, app.theme.selection);
         assert_ne!(buf[(52, 2)].bg, app.theme.selection);
-        assert!(buf[(51, 2)].modifier.contains(Modifier::REVERSED));
+        // The cursor, on the selection's last char, is drawn over it.
+        assert_eq!(buf[(51, 2)].bg, app.theme.cursor);
+        assert_eq!(buf[(51, 2)].fg, app.theme.background);
         insta::assert_snapshot!(backend);
     }
 

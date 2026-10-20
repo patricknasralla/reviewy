@@ -98,6 +98,8 @@ theme = "Tokyo Night Moon"           # unset by default (bundled Tokyo Night Moo
 # theme_variant = "Tokyo Night Moon" # required only when `theme` is a path
 wrap = true
 tab_width = 4
+cursor_blink = true                  # blinking cursors (false: steady)
+cursor_blink_ms = 500                # block cursor blink interval
 
 [ui.tint]                            # 0-1: added/deleted color blended onto the background
 line = 0.02                          # changed lines

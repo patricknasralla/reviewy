@@ -59,6 +59,8 @@ pub struct Theme {
     pub active_line_background: Color,
     /// Visual-mode selection background (`players[0].selection`).
     pub selection: Color,
+    /// Block cursor background (`players[0].cursor`).
+    pub cursor: Color,
     pub added: Color,
     pub deleted: Color,
     pub modified: Color,
@@ -185,9 +187,13 @@ impl Variant {
 
         let foreground = color(&["editor.foreground"])?;
         let active_line = color(&["editor.active_line.background"])?;
-        let selection = match self.selection() {
+        let selection = match self.player("selection") {
             Some(value) => blended("players[0].selection", value)?,
             None => blend(foreground, active_line, tint.selection),
+        };
+        let cursor = match self.player("cursor") {
+            Some(value) => blended("players[0].cursor", value)?,
+            None => foreground,
         };
         let added = color(&["version_control.added", "created"])?;
         let deleted = color(&["version_control.deleted", "deleted"])?;
@@ -217,6 +223,7 @@ impl Variant {
             line_number: rgb(color(&["editor.line_number"])?),
             active_line_background: rgb(active_line),
             selection: rgb(selection),
+            cursor: rgb(cursor),
             added: rgb(added),
             deleted: rgb(deleted),
             modified: rgb(color(&["version_control.modified", "modified"])?),
@@ -229,13 +236,9 @@ impl Variant {
         })
     }
 
-    fn selection(&self) -> Option<&str> {
-        self.style
-            .colors
-            .get("players")?
-            .get(0)?
-            .get("selection")?
-            .as_str()
+    /// `players[0].<key>`.
+    fn player(&self, key: &str) -> Option<&str> {
+        self.style.colors.get("players")?.get(0)?.get(key)?.as_str()
     }
 
     /// First of `keys` with a non-null value, so `version_control.*` can fall back.
@@ -296,6 +299,29 @@ mod tests {
     fn alpha_blends_onto_background() {
         let (rgb, alpha) = parse_hex("#ffffff80").unwrap();
         assert_eq!(blend(rgb, [0, 0, 0], alpha), [128, 128, 128]);
+    }
+
+    #[test]
+    fn cursor_falls_back_to_foreground() {
+        let variant = |name: &str, players: &str| {
+            format!(
+                r##"{{"name": "{name}", "appearance": "dark", "style": {{
+                "editor.background": "#000000", "editor.foreground": "#ffffff",
+                "editor.line_number": "#808080", "editor.active_line.background": "#101010",
+                "created": "#00ff00", "deleted": "#ff0000", "modified": "#ffff00", "conflict": "#ff00ff",
+                {players} "syntax": {{}}}}}}"##
+            )
+        };
+        let json = format!(
+            r#"{{"themes": [{}, {}]}}"#,
+            variant("A", r##""players": [{"cursor": "#ff000080"}],"##),
+            variant("B", "")
+        );
+        let family: Family = serde_json::from_str(&json).unwrap();
+        let families = [family];
+        let cursor = |name| find(&families, name, TINT).unwrap().cursor;
+        assert_eq!(cursor("A"), Color::Rgb(128, 0, 0));
+        assert_eq!(cursor("B"), Color::Rgb(255, 255, 255));
     }
 
     #[test]

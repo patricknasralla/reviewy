@@ -14,18 +14,21 @@ use std::io::{self, Stdout, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use clap::Parser;
 use color_eyre::Result;
 use color_eyre::eyre::{WrapErr, bail};
+use crossterm::cursor::SetCursorStyle;
 use crossterm::event::{self, DisableBracketedPaste, EnableBracketedPaste, Event};
+use crossterm::style::Print;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use crossterm::{cursor, execute};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
+use ratatui::style::Color;
 use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
 use tracing_subscriber::EnvFilter;
 
@@ -89,7 +92,7 @@ fn main() -> Result<()> {
 
     let mut app = App::new(config, root, base_commit, files, theme, status);
     app.load_existing(comments::store::load(&dir));
-    let mut terminal = enter_terminal()?;
+    let mut terminal = enter_terminal(&app.theme, app.config.ui.cursor_blink)?;
     let size = terminal.size()?;
     app.resize(size.width, size.height);
     let result = run(&mut terminal, &terminate, app);
@@ -103,7 +106,11 @@ fn run(terminal: &mut Tui, terminate: &AtomicBool, mut app: App) -> Result<()> {
             app.save().wrap_err("saving comments")?;
             break;
         }
-        if event::poll(Duration::from_millis(250))? {
+        let mut timeout = Duration::from_millis(250);
+        if let Some(at) = app.next_blink() {
+            timeout = timeout.min(at.saturating_duration_since(Instant::now()));
+        }
+        if event::poll(timeout)? {
             match event::read()? {
                 Event::Key(key) => app.handle_key(key),
                 Event::Paste(text) => app.paste(&text),
@@ -111,6 +118,7 @@ fn run(terminal: &mut Tui, terminate: &AtomicBool, mut app: App) -> Result<()> {
                 _ => {}
             }
         }
+        app.blink(Instant::now());
         if app.dirty {
             terminal.draw(|frame| ui::draw(frame, &app))?;
             app.dirty = false;
@@ -158,9 +166,26 @@ fn init_logging(dir: &Path, directive: &str) -> Result<()> {
     Ok(())
 }
 
-fn enter_terminal() -> Result<Tui> {
+/// The terminal cursor is only ever the insert bar; block cursors are drawn.
+fn enter_terminal(theme: &Theme, blink: bool) -> Result<Tui> {
     enable_raw_mode()?;
-    execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste)?;
+    let bar = if blink {
+        SetCursorStyle::BlinkingBar
+    } else {
+        SetCursorStyle::SteadyBar
+    };
+    // OSC 12: cursor color.
+    let color = match theme.cursor {
+        Color::Rgb(r, g, b) => format!("\x1b]12;#{r:02x}{g:02x}{b:02x}\x07"),
+        _ => String::new(),
+    };
+    execute!(
+        io::stdout(),
+        EnterAlternateScreen,
+        EnableBracketedPaste,
+        bar,
+        Print(color)
+    )?;
     Ok(Terminal::new(CrosstermBackend::new(io::stdout()))?)
 }
 
@@ -170,6 +195,9 @@ fn restore_terminal() -> io::Result<()> {
         io::stdout(),
         DisableBracketedPaste,
         LeaveAlternateScreen,
-        cursor::Show
+        cursor::Show,
+        SetCursorStyle::DefaultUserShape,
+        // OSC 112: reset the cursor color.
+        Print("\x1b]112\x07")
     )
 }

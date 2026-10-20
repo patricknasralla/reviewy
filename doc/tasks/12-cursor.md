@@ -50,3 +50,22 @@ The editor is still insert-only in this task, so it always shows the bar. Task 1
 - fmt, clippy, tests clean.
 
 ## Handoff notes
+
+### Public interfaces
+
+- `Theme::cursor: Color` (`players[0].cursor`, fallback `editor.foreground`). `Variant::selection()` became `Variant::player(key)`.
+- `UiConfig::{cursor_blink: bool, cursor_blink_ms: u64}`.
+- `App`: `pub cursor_on: bool` (blink phase, starts visible), private `blink_at: Instant`; `diff_focused() -> bool` (not Explorer, no modal), `next_blink() -> Option<Instant>` (`None` unless blinking and a block is shown), `blink(now)` (toggles when due, sets `dirty`), private `reset_blink()` (called from `handle_key` and `paste`).
+- `ui::cursor_block(buf, Position, &Theme)`: private to `ui`, so only its child modules (diff view, editor) use it. Sets fg `theme.background`, bg `theme.cursor`.
+- `main::enter_terminal(&Theme, blink: bool)`: sets the bar shape and OSC 12 color. `restore_terminal()` always sends `DefaultUserShape` and OSC 112.
+
+### Decisions (developer decisions; spec §4, §9, §10, §13 and README updated)
+
+- The block is drawn only while the diff view has focus (no explorer, no modal); the blink timer runs only then, so nothing redraws for blinking under the explorer or a modal.
+- Poll timeout is `min(250 ms, time to next blink)`, so the blink interval is exact and not rounded to 250 ms ticks.
+- The terminal cursor is only ever the bar, so its shape and color are set once at startup rather than per mode.
+- The cursor is drawn after the selection, so it covers the selection's last cell (test `charwise_selection_over_two_lines` updated).
+
+### Left undone / flagged
+
+- None. Manually verified in ghostty by the developer.

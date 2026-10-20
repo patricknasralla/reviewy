@@ -45,7 +45,8 @@ Second of four tasks (12-15). The editor is currently insert-only (`ui/editor.rs
     - Esc: back to the editor in its previous mode.
   - Quitting the app from the editor is therefore two `Ctrl-q`s: the first closes the comment, the second opens the quit modal.
 - Paste (`Event::Paste`): inserts at the cursor in any mode; the mode is unchanged (in Normal the cursor is then clamped).
-- Cursor: drawn block (task 12 helper, blinking) in Normal, terminal bar in Insert.
+- Cursor: drawn block in Normal, terminal bar in Insert. The block is `ui::cursor_block` (task 12, private to `ui`, callable from `ui/editor.rs`), drawn only when `app.cursor_on`. Only the bar comes from `frame.set_cursor_position`; in Normal don't set it (ratatui then hides the terminal cursor).
+- Blink: task 12 runs the blink timer only while `App::diff_focused()` (no explorer, no modal). Extend the condition in `App::next_blink` so it also runs while the editor is the top modal in Normal mode (not Insert, where the terminal blinks the bar).
 - Status line: shows the editor's mode (`NORMAL`, `INSERT`) instead of the hard-coded `INSERT`; pending count/chord as today.
 
 ### Spec
