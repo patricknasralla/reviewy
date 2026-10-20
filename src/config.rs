@@ -49,7 +49,6 @@ pub struct IgnoreConfig {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-#[allow(dead_code, reason = "all fields read by task 10; remove then")]
 pub struct CommentsConfig {
     pub context_lines: usize,
     pub preamble: String,

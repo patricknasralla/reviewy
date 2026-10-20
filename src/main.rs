@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use clap::Parser;
 use color_eyre::Result;
-use color_eyre::eyre::bail;
+use color_eyre::eyre::{WrapErr, bail};
 use crossterm::event::{self, DisableBracketedPaste, EnableBracketedPaste, Event};
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -85,9 +85,10 @@ fn main() -> Result<()> {
         return Ok(());
     }
     tracing::debug!(?files, "changed files");
-    ensure_reviewy_dir(&root)?;
+    let dir = ensure_reviewy_dir(&root)?;
 
     let mut app = App::new(config, root, base_commit, files, theme, status);
+    app.load_existing(comments::store::load(&dir));
     let mut terminal = enter_terminal()?;
     let size = terminal.size()?;
     app.resize(size.width, size.height);
@@ -99,7 +100,7 @@ fn main() -> Result<()> {
 fn run(terminal: &mut Tui, terminate: &AtomicBool, mut app: App) -> Result<()> {
     loop {
         if terminate.load(Ordering::Relaxed) {
-            // task 10: save comments
+            app.save().wrap_err("saving comments")?;
             break;
         }
         if event::poll(Duration::from_millis(250))? {
@@ -121,7 +122,7 @@ fn run(terminal: &mut Tui, terminate: &AtomicBool, mut app: App) -> Result<()> {
             app.dirty = false;
         }
         if app.should_quit {
-            // task 10: save comments
+            app.save().wrap_err("saving comments")?;
             break;
         }
     }

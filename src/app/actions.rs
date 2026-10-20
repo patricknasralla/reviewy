@@ -81,19 +81,19 @@ impl App {
         match action {
             Action::ModalConfirm => match self.modals.pop() {
                 Some(Modal::LargeFile { pending, .. }) => self.start_diff(pending),
-                Some(Modal::Quit) => {
-                    // task 10: save
-                    self.should_quit = true;
-                }
+                Some(Modal::Quit) => self.should_quit = true,
                 Some(Modal::DeleteComment(id)) => {
                     self.comments.remove(id);
                 }
                 Some(Modal::CloseComment) => self.close_editor(),
                 // The editor takes its own keys (`App::handle_key`).
-                Some(Modal::Editor(_)) | None => {}
+                // Discard: `comments` is still the empty startup set.
+                Some(Modal::LoadExisting(_) | Modal::Editor(_)) | None => {}
             },
             Action::ModalCancel => {
-                self.modals.pop();
+                if let Some(Modal::LoadExisting(Ok(set))) = self.modals.pop() {
+                    self.keep(set);
+                }
             }
             Action::ExplorerMove(motion, count) => {
                 let last = self.files.len() - 1;

@@ -167,6 +167,7 @@ src/
     actions.rs         Action enum, vim::Command → Action mapping, App::apply
     open.rs            open-file pipeline (content, limits, difft, align, highlight)
     comment.rs         comment flows: create/edit/delete, editor input, comment target
+    persist.rs         load existing (keep/discard) and App::save
   ui.rs                declares submodules; top-level draw()
   ui/
     explorer.rs        explorer overlay
@@ -449,13 +450,13 @@ Convention for all confirmations: **Enter confirms, Esc cancels.**
 
 | Modal | Trigger | Enter | Esc |
 |---|---|---|---|
-| Load existing | Startup with `comments.json` present | Keep comments | Discard (in memory) |
+| Load existing | Startup with `comments.json` present | Discard (in memory) | Keep comments |
 | Large file | Opening a file over limits | View | Cancel |
 | Delete comment | `D` on commented line | Delete | Cancel |
 | Close comment | Esc in comment editor | Close editor | Return to editing |
 | Quit | `Ctrl-q` | Save and quit | Cancel |
 
-For "Load existing", a discarded set is only dropped from memory; the files are overwritten (or deleted) on exit.
+For "Load existing", the question is "Found N comments from a previous session (base <short sha>). Discard them?": discarding is the usual answer, so it is the Enter action. A discarded set is only dropped from memory; the files are overwritten (or deleted) on exit. If loading fails, the modal shows the error and Enter/Esc both discard (the file is replaced on exit).
 
 ### Comment editor
 
@@ -588,6 +589,8 @@ struct Excerpt { start: u32, lines: Vec<String> }  // contiguous lines from `sta
 - Panics: the panic hook restores the terminal and reports; comments are **not** saved (accepted for v1).
 - Writes use write-temp-then-rename within `.reviewy/`, so a kill mid-write never leaves a truncated file.
 - Empty comment set on exit -> both files deleted.
+- Comments with an empty (whitespace-only) body are left out of the written files; the in-memory set is not changed, so a save is safe mid-session.
+- While the "Load existing" modal is unanswered, nothing is saved (quit and signals exit without touching the files): the in-memory set is still empty and saving it would delete the previous files.
 - Files: `.reviewy/comments.json` (source of truth, serde, lossless), `.reviewy/comments.md` (generated, never parsed back).
 - `load` checks `version` before deserializing the rest; `!= 1` is an error.
 
@@ -714,7 +717,7 @@ graph_limit = 500000         # DFT_GRAPH_LIMIT: vertices before difft falls back
 
 | Purpose | Crate |
 |---|---|
-| TUI | `ratatui`, `crossterm` |
+| TUI | `ratatui` (feature `unstable-rendered-line-info` for `Paragraph::line_count`), `crossterm` |
 | CLI | `clap` (derive) |
 | Serialization | `serde`, `serde_json`, `toml` |
 | Errors | `color-eyre`, `thiserror` |

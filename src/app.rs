@@ -3,6 +3,7 @@
 pub mod actions;
 pub mod comment;
 pub mod open;
+pub mod persist;
 pub mod state;
 pub mod view;
 

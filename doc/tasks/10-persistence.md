@@ -12,7 +12,7 @@ Read first: `doc/spec.md` §3 (steps 7–8), §4 (startup, shutdown), §10 (moda
 
 ## Deliverables
 
-- **Startup** (§4 step 8): if `.reviewy/comments.json` exists, load it (`store::load(.reviewy/)` returns `Ok(None)` when it doesn't). On success, show the "Load existing" modal on top of the explorer: "Found N comments from a previous session (base <short sha>). Keep them?" - Enter keeps (replace `App::comments` with the loaded set, keeping its `next_id`; update `base` to the current base commit), Esc discards in memory only. If loading fails (bad JSON, wrong version), show the error in the modal and treat Enter/Esc as discard; never delete the file at startup.
+- **Startup** (§4 step 8): if `.reviewy/comments.json` exists, load it (`store::load(.reviewy/)` returns `Ok(None)` when it doesn't). On success, show the "Load existing" modal on top of the explorer: "Found N comments from a previous session (base <short sha>). Discard them?" - Enter discards in memory only, Esc keeps (replace `App::comments` with the loaded set, keeping its `next_id`; update `base` to the current base commit). (Developer decision; was "Keep them?" with Enter = keep.) If loading fails (bad JSON, wrong version), show the error in the modal and treat Enter/Esc as discard; never delete the file at startup.
   - The modal must be on top of the stack before any other input is handled.
   - Until the reviewer answers it, save points must **not** call `store::save`: the in-memory set is still empty, and saving it would delete the previous `comments.json`. A signal or quit while the modal is open exits without touching the files.
 - **Save points:** confirmed quit (`Ctrl-q` → Enter) and the signal flag (SIGTERM/SIGHUP/SIGINT). Both call one `App::save()` → `store::save(.reviewy/, &comments, &config.comments.preamble)`. The comment editor's current buffer is already in the model (task 09), so an open editor is saved as-is; empty-body comments are dropped before saving.
@@ -28,10 +28,29 @@ Read first: `doc/spec.md` §3 (steps 7–8), §4 (startup, shutdown), §10 (moda
 ## Acceptance
 
 - Create comments, quit → `comments.json` and `comments.md` written; `comments.md` reads correctly for an agent.
-- Restart → keep → markers and counts are back; edit and quit → files updated. Restart → discard → quit with no new comments → both files deleted.
+- Restart → Esc (keep) → markers and counts are back; edit and quit → files updated. Restart → Enter (discard) → quit with no new comments → both files deleted.
 - `kill <pid>` with comments open → files written, terminal restored.
 - fmt, clippy, tests clean.
 
 ## Handoff notes
 
-_To be filled in by the implementing agent._
+### Public interfaces
+
+- `app::state::Modal::LoadExisting(Result<CommentSet, String>)`: the loaded set, or the load error's display text.
+- `app/persist.rs` (new): `pub fn App::load_existing(Result<Option<CommentSet>, CommentsError>)` (pushes the modal unless `Ok(None)`), `pub(super) fn App::keep(CommentSet)` (sets `base` to the current one, swaps the set in), `pub fn App::save(&self) -> Result<(), CommentsError>`.
+- `ui::modals::confirm` sizes the box with `Paragraph::line_count` (ratatui feature `unstable-rendered-line-info`, added to `Cargo.toml`).
+
+### Decisions and deviations (developer decisions; spec §5, §10, §12, §15 updated)
+
+- **"Discard them?"**: Enter discards, Esc keeps (the user usually wants to discard). The message pluralizes ("1 comment ... Discard it?"). Load error: the error text, hint `Enter/Esc: discard (file replaced on exit)`; the bad file is overwritten or deleted on exit (accepted).
+- **Save in `run()`, not `App::apply`** (deviation from this task's Context): `ModalConfirm` on `Quit` only sets `should_quit`; both exit points in `run()` call `app.save().wrap_err("saving comments")?`, so a save error reaches stderr after `main` restores the terminal (exit 1).
+- **`save(&self)` is Ctrl-s ready**: it filters empty-body comments (`body.trim()`) into a copy, leaving the in-memory set (and an open editor's comment) alone, and returns the error to the caller. A future Ctrl-s action can call it and show the error in the status line. The "Load existing" guard is inside `save`, covering every caller.
+- **Guard checks the whole stack**: Ctrl-q can push Quit over "Load existing"; quitting or a signal then exits without touching the files.
+- **`confirm` height fix** (task 07 module change): the old chars/width estimate was too short for word-wrapped text (long error paths), clipping the hint.
+- No current-sha display in the modal when the base differs: stale anchors are a v1.1+ topic.
+- Dead code allows removed from `pub mod store;` and `CommentsConfig`.
+
+### Left undone / flagged
+
+- Manual check (scratch repo, GNU screen): quit writes both files; keep/edit/quit updates them; discard/quit deletes them; Ctrl-q and SIGTERM with the modal open leave the files untouched; SIGTERM with the editor open saves its buffer; read-only `.reviewy/` gives the error on stderr and exit 1; broken JSON shows the error modal; a temporary panic with the editor open restored raw mode (exit 101). Leaving the alternate screen is not visible in screen; task 11 checks it in a real terminal.
+- Save errors print the OS error twice (`CommentsError::Io` displays its source and also returns it from `source()`). Left as is (developer decision).

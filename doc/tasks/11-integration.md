@@ -17,7 +17,7 @@ Read first: `doc/spec.md` §16 (testing), then the whole spec once. Read handoff
 
 ## Manual review checklist
 
-Run in a real repo with a realistic agent-sized change (10–20 files) and check: startup time, open time for the largest file, wrap on/off, every §11 key, all modals, comment create/edit/delete, quit/save/reload, SIGTERM. Record findings and fixes in handoff notes.
+Run in a real repo with a realistic agent-sized change (10–20 files) and check: startup time, open time for the largest file, wrap on/off, every §11 key, all modals (including "Load existing" with a broken `comments.json`), comment create/edit/delete, quit/save/reload, SIGTERM. In a real terminal (not GNU screen), check the alternate screen is left cleanly after quit, SIGTERM and a panic (task 10 could only check raw mode). Record findings and fixes in handoff notes.
 
 ## Acceptance
 

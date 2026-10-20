@@ -34,6 +34,31 @@ pub fn draw(frame: &mut Frame, area: Rect, theme: &Theme, modal: &Modal, top: bo
             "Save and quit?",
             "Enter: quit / Esc: cancel",
         ),
+        Modal::LoadExisting(Ok(set)) => {
+            let n = set.comments.len();
+            let (noun, them) = if n == 1 {
+                ("comment", "it")
+            } else {
+                ("comments", "them")
+            };
+            let base = set.base.commit.get(..7).unwrap_or(&set.base.commit);
+            confirm(
+                frame,
+                area,
+                theme,
+                "Previous comments",
+                &format!("Found {n} {noun} from a previous session (base {base}). Discard {them}?"),
+                "Enter: discard / Esc: keep",
+            )
+        }
+        Modal::LoadExisting(Err(e)) => confirm(
+            frame,
+            area,
+            theme,
+            "Previous comments",
+            e,
+            "Enter/Esc: discard (file replaced on exit)",
+        ),
         Modal::Editor(editor) => editor.draw(frame, area, theme, top),
         Modal::DeleteComment(id) => confirm(
             frame,
@@ -57,24 +82,19 @@ pub fn draw(frame: &mut Frame, area: Rect, theme: &Theme, modal: &Modal, top: bo
 /// Centered box: wrapped message, blank line, key hint.
 fn confirm(frame: &mut Frame, area: Rect, theme: &Theme, title: &str, message: &str, hint: &str) {
     let width = (message.chars().count().max(hint.chars().count()) as u16 + 4).min(60);
-    let lines = message
-        .chars()
-        .count()
-        .div_ceil(usize::from(width.saturating_sub(4).max(1)));
-    let rect = centered(area, width, lines as u16 + 4);
     let block = Block::bordered()
         .title(format!(" {title} "))
+        .padding(Padding::horizontal(1))
         .style(Style::new().bg(theme.background).fg(theme.foreground));
     let text = vec![
         Line::raw(message),
         Line::raw(""),
         Line::styled(hint, Style::new().fg(theme.line_number)),
     ];
+    let paragraph = Paragraph::new(text).block(block).wrap(Wrap { trim: true });
+    // Wraps at the text width (inside borders and padding); the count includes the borders.
+    let height = paragraph.line_count(width.saturating_sub(4));
+    let rect = centered(area, width, height as u16);
     frame.render_widget(Clear, rect);
-    frame.render_widget(
-        Paragraph::new(text)
-            .block(block.padding(Padding::horizontal(1)))
-            .wrap(Wrap { trim: true }),
-        rect,
-    );
+    frame.render_widget(paragraph, rect);
 }
