@@ -23,7 +23,7 @@ Design principles:
 - Single command `reviewy`, run in a git repository.
 - Diff: all changes since the last commit on the current branch (staged, unstaged and untracked) vs `HEAD`.
 - Difftastic (`difft --display json`) as the diff engine.
-- Explorer overlay listing changed files (status color, comment count, binary marker).
+- Explorer overlay listing changed files (status color, comment count, unviewable markers).
 - Side-by-side, two-column, whole-file diff view with tree-sitter syntax highlighting and change backgrounds.
 - Languages: Rust, Python, C#, TypeScript (incl. TSX). Other files render as plain text.
 - Zed-format themes: bundled themes plus a user themes directory.
@@ -64,16 +64,16 @@ Design principles:
 5. The developer navigates like a read-only vim buffer, selects lines or text and presses Enter to comment. The selection (if any) is pasted into the comment box as a fenced code block. Commented lines get a gutter marker.
 6. Moving to a commented line and pressing Enter reopens that comment for editing. `D` deletes it after confirmation.
 7. `Ctrl-q` (with confirmation) quits. Comments are written to `.reviewy/comments.json` and `.reviewy/comments.md`. The developer pastes the md into the agent session or a harness reads either file.
-8. On the next run, if `.reviewy/comments.json` exists, a dialog asks whether to keep or discard the previous comments. Either way the files are overwritten on exit.
+8. On the next run, if `.reviewy/comments.json` exists, a dialog asks whether to discard (Enter) or keep (Esc) the previous comments. Either way the files are overwritten on exit.
 
 ## 4. Architecture overview
 
 - **Single crate**, binary `reviewy`.
 - **Synchronous** main loop. No async runtime.
-- **External processes:** `git` (status, show, diff) and `difft` (via `GIT_EXTERNAL_DIFF` or directly).
+- **External processes:** `git` (status, cat-file, diff) and `difft` (via `GIT_EXTERNAL_DIFF` or directly).
 - **Lazy per-file work:** a file's diff, content and highlighting are computed when it is first opened and cached for the session.
 - **One shared vim engine** (key parsing, motions, soft-wrap layout) used by both the diff view and the comment editor.
-- **Plain in-memory state:** `App` owns everything, including `Vec<Comment>`. No shared ownership, no locks.
+- **Plain in-memory state:** `App` owns everything, including the `CommentSet`. No shared ownership, no locks.
 
 ### CLI
 
@@ -89,15 +89,17 @@ reviewy [OPTIONS] [DIFF_ARGS]...
 
 ```
 loop {
-    if terminate_flag.load() { save(); break; }
-    if crossterm::event::poll(timeout)? {
-        let event = crossterm::event::read()?;
-        if let Some(input) = keys.handle(key_event) {    // vim::Input { command, count }
-            app.apply(app.map_input(input));             // → Action
+    if terminate.load() { app.save()?; break; }
+    if event::poll(250 ms)? {
+        match event::read()? {
+            Key(key) => app.handle_key(key),   // editor on top: editor_key; else keys.handle → vim::Input → map → Action → apply
+            Paste(text) => app.paste(&text),   // only when the editor is on top
+            Resize(w, h) => app.resize(w, h),
         }
     }
     if app.dirty { terminal.draw(|f| ui::draw(f, &app))?; app.dirty = false; }
-    if app.should_quit { save(); break; }
+    if app.pending.is_some() { app.finish_open(); terminal.draw(…)?; }   // "Diffing…" is drawn first
+    if app.should_quit { app.save()?; break; }
 }
 ```
 
@@ -106,23 +108,24 @@ loop {
 
 ### Startup sequence
 
-1. Install panic hook (restore terminal, then color-eyre report) and signal flag.
+1. Install panic hook (restore terminal, then color-eyre report), parse the CLI, install the signal flag.
 2. Resolve repo root: `git rev-parse --show-toplevel`. Not a repo → error and exit.
 3. Resolve base commit: `git rev-parse HEAD`. No commits → error and exit (v1).
 4. Load config (built-in defaults, global, then project override).
    - If `REVIEWY_LOG` is set: create `.reviewy/` (as in step 7) and start logging. Done here so later steps can log.
+   - Resolve the theme (§9); a failure falls back to the bundled default and becomes the startup status message.
 5. Check `<difft.binary> --version` (the binary path comes from config). Missing or too old → error with install hint and exit.
 6. Collect changed files (§6). None → print "No changes" and exit.
 7. Ensure `.reviewy/` exists and contains a `.gitignore` with `*` (ignores the whole folder without touching the user's root `.gitignore`).
-8. If `.reviewy/comments.json` exists → "keep / discard" dialog.
-9. Enter terminal (raw mode, alternate screen, bracketed paste), show explorer overlay.
+8. Build `App`, then `store::load(.reviewy/)`: if `comments.json` exists (or fails to load), push the "Load existing" modal (§10), so it is on top before any input.
+9. Enter terminal (raw mode, alternate screen, bracketed paste), show explorer overlay (and the modal).
 
 ### Shutdown
 
-- Triggered by confirmed `Ctrl-q` or a termination signal.
+- Triggered by confirmed `Ctrl-q` or a termination signal. Both call `App::save()` from the event loop (§12).
 - If comments exist: write `comments.json` and `comments.md` (write-to-temp-then-rename).
 - If no comments: delete both files.
-- Restore terminal.
+- Restore terminal. A save error is returned from the loop, so it is printed to stderr after the terminal is restored and the exit code is non-zero.
 
 ## 5. Module layout
 
@@ -404,7 +407,7 @@ Capture → theme key mapping:
 Theme resolution:
 
 0. `ui.theme` unset → the bundled default (`default_theme::VARIANT` in `src/defaults/default_theme.rs`). The default theme is not a `defaults.toml` key, because its name and its compiled-in JSON must change together.
-1. `theme` in config is either a variant name (e.g. `"Tokyo Night Moon"`), matched against variant names across all theme families, or a path to a theme JSON file plus `theme_variant`. A relative path is relative to the config file that sets it.
+1. `theme` in config is either a variant name (e.g. `"Tokyo Night Moon"`), matched against variant names across all theme families, or a path to a theme JSON file plus `theme_variant`. A path starting with `~/` is expanded to the home directory; another relative path is relative to the config file that sets it.
 2. Names are looked up in `~/.config/reviewy/themes/*.json`, then bundled themes. User themes shadow bundled ones.
 3. No lookup in Zed's own directories - Reviewy's themes are decoupled so they can diverge.
 4. Any failure (name not found, unreadable or invalid file, missing variant or required key) logs a warning, falls back to the bundled default and shows the error in the status line at startup.
@@ -433,7 +436,7 @@ Bundled: `src/defaults/tokyo-night.json`, compiled in via `include_str!` in `src
 
 - Two equal columns: old (left), new (right). Added files show an empty left column; deleted files an empty right column.
 - Gutter per column: line number, change marker (`+` / `-` / `~`), comment marker (e.g. `●`) on the side the comment was made on.
-- Active column is indicated (e.g. brighter gutter / border).
+- Active column is indicated by its line numbers (`editor.foreground`; the other column uses `editor.line_number`).
 - Cursor line: `active_line` background on the active column; the text cursor is a reversed cell; visual selections use the selection color (§9), drawn over all other backgrounds.
 - On first open, the cursor is on the first non-blank char of the first hunk (as `]` from the top; a file starting with a pure deletion opens on the old column). Reopening a file restores its cursor and scroll.
 - Vertical scroll is per screen line, so a wrapped row taller than the viewport scrolls by segment.
@@ -574,7 +577,7 @@ struct Excerpt { start: u32, lines: Vec<String> }  // contiguous lines from `sta
 - Overlap is allowed by the model (ranges are independent). **v1 UI refuses** to create a comment whose line range intersects an existing comment on the same file and side, with a status message. The v1.1 picker lifts this without model changes.
 - Old-side comments are flagged by `side = Old`; the preamble explains what that means.
 - No staleness checks in v1. The base commit is stored for later verification.
-- **Tabs (v1):** excerpt text and cols come from tab-expanded lines, so tab-indented files get spaces and expanded columns. See task 11 follow-ups.
+- **Tabs (v1):** excerpt text and cols come from tab-expanded lines, so tab-indented files get spaces and expanded columns. See `doc/tasks/v1-followups.md`.
 
 ### Lifecycle
 
@@ -676,7 +679,7 @@ Tables deep-merge per key; arrays replace. Unknown keys and wrong types are erro
 
 ```toml
 [ui]
-theme = "Tokyo Night Moon"           # variant name, or path to a theme JSON (relative to this file); unset → bundled default
+theme = "Tokyo Night Moon"           # variant name, or path to a theme JSON (relative to this file, or ~/...); unset → bundled default
 # theme_variant = "Tokyo Night Moon" # required only when `theme` is a path
 wrap = true
 tab_width = 4
@@ -692,7 +695,7 @@ max_bytes = 1048576
 max_line_length = 1000
 
 [ignore]
-paths = ["*.lock", "dist/**"] # globs, repo-relative (globset)
+paths = ["*.lock", "dist/**"] # globs, repo-relative (globset); default []
 
 [comments]
 context_lines = 3
@@ -727,9 +730,9 @@ graph_limit = 500000         # DFT_GRAPH_LIMIT: vertices before difft falls back
 | Ignore globs | `globset` |
 | Signals | `signal-hook` |
 | Logging | `tracing`, `tracing-subscriber` |
-| Tests (dev) | `insta`, `tempfile` (test repos only) |
+| Tests (dev) | `insta`, `tempfile` (temporary `.reviewy/` dirs) |
 
-Highlighting versions were verified together (S3): one `tree-sitter` in the tree, grammars linked via `tree-sitter-language` 0.1. Other versions are pinned at implementation time. All grammar crates are MIT; `tree-sitter-typescript` ships no LICENSE file, so credit it in third-party notices manually.
+Highlighting versions were verified together (S3): one `tree-sitter` in the tree, grammars linked via `tree-sitter-language` 0.1. Other versions are pinned at implementation time. All grammar crates are MIT; `tree-sitter-typescript` ships no LICENSE file, so it is credited manually in `THIRD_PARTY.md`.
 
 ## 16. Testing
 
@@ -744,9 +747,11 @@ Highlighting versions were verified together (S3): one `tree-sitter` in the tree
   - `vim/`: key parser (counts, chords, Esc), motions over fixture text, wrap layout ↔ screen-row motions.
   - `highlight/theme.rs`: Zed theme parsing, alpha blending, capture fallback.
   - `comments/`: JSON round-trip (lossless), overlap check, md rendering (insta snapshot), fence-length selection.
-  - `config.rs`: merge order and defaults.
-- **UI snapshot tests:** ratatui `TestBackend` + `insta` for explorer, diff view (wrap on/off, added/deleted files), modals, editor.
-- **Integration tests:** build a temporary git repo (`tempfile` dev-dep), make changes, run the pipeline end to end. Require `git` and `difft`; gated behind `#[ignore]` or a feature if unavailable.
+  - `comments/store.rs`: an empty set deletes both files.
+  - `config.rs`: merge order, defaults, unknown keys, relative theme paths.
+  - `app/`: hunk navigation, padding-skipping motions, column switches, comment targets per mode, create/close flow, save without empty-body comments, keeping a loaded set.
+- **UI snapshot tests:** ratatui `TestBackend` + `insta` for explorer, diff view (wrap on/off, added file, charwise selection), large-file modal, comment editor.
+- **No integration tests in v1** (developer decision). The crate is binary-only; the pipeline was verified by hand on scratch repos.
 
 ## 17. Spikes
 

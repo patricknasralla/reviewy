@@ -97,11 +97,19 @@ pub(crate) fn from_sources(sources: &[(&Path, &str)]) -> Result<Config> {
     Ok(config)
 }
 
-/// Makes a relative theme path in `ui.theme` relative to the config file that sets it.
+/// Expands `~/` in a `ui.theme` path, and makes a relative one relative to the config file that sets it.
 fn resolve_theme_path(table: &mut Table, file: &Path) {
-    if let Some(Value::String(theme)) = table.get_mut("ui").and_then(|ui| ui.get_mut("theme"))
-        && theme::is_path(theme)
-        && Path::new(theme).is_relative()
+    let Some(Value::String(theme)) = table.get_mut("ui").and_then(|ui| ui.get_mut("theme")) else {
+        return;
+    };
+    if !theme::is_path(theme) {
+        return;
+    }
+    if let Some(rest) = theme.strip_prefix("~/")
+        && let Ok(home) = etcetera::home_dir()
+    {
+        *theme = home.join(rest).to_string_lossy().into_owned();
+    } else if Path::new(theme).is_relative()
         && let Some(dir) = file.parent()
     {
         *theme = dir.join(&*theme).to_string_lossy().into_owned();

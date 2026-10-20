@@ -255,6 +255,8 @@ impl FileView {
             // A span taller than the viewport still starts on screen.
             self.scroll = need.min(span.start);
         }
+        // No empty lines below the last row, e.g. after the terminal grows.
+        self.scroll = self.scroll.min(end.saturating_sub(height));
     }
 
     /// Scrolls horizontally so the text cursor's cell is inside the active column.

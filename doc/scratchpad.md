@@ -191,4 +191,11 @@ Quick notes:
 Exiting comments: Esc -> Confirmation Modal: Enter confirms, Esc cancels. That way User needs to hit Esc Enter to close, and Esc Esc if hit by mistake. Simple 2 button combo, but must be explicit.
 
 
-, `tempfile` at runtime (git handles temp files), `imara-diff` (v1.1), any async runtime.
+---
+
+Most urgent additions (pre v1)
+
+- move to next comment (similar keybind to move to hunk) `g] g[ best candidates` 
+- syntax highlighting of comments
+- Modal editing in comments
+- mouse interaction.
