@@ -61,6 +61,10 @@ pub fn draw(
         return;
     };
     let pos = Position::new(inner.x + x, inner.y + row);
+    // A box too small for any text (tiny terminal) has no cell for the cursor.
+    if !inner.contains(pos) {
+        return;
+    }
     match editor.mode() {
         Mode::Insert => frame.set_cursor_position(pos),
         _ if cursor_on => super::cursor_block(frame.buffer_mut(), pos, theme),

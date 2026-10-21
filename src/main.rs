@@ -97,43 +97,51 @@ fn main() -> Result<()> {
     let size = terminal.size()?;
     app.resize(size.width, size.height);
     let result = run(&mut terminal, &terminate, app);
-    restore_terminal()?;
+    if restore_terminal().is_err() {
+        // The terminal is gone (window closed): dropping `terminal` would print to the closed
+        // stderr, which panics.
+        std::mem::forget(terminal);
+    }
     result
 }
 
+/// Saves comments on quit, on a termination signal, and when the terminal goes away.
 fn run(terminal: &mut Tui, terminate: &AtomicBool, mut app: App) -> Result<()> {
     loop {
-        if terminate.load(Ordering::Relaxed) {
-            app.save().wrap_err("saving comments")?;
-            break;
+        if terminate.load(Ordering::Relaxed) || app.should_quit {
+            return app.save().wrap_err("saving comments");
         }
-        let mut timeout = Duration::from_millis(250);
-        if let Some(at) = app.next_blink() {
-            timeout = timeout.min(at.saturating_duration_since(Instant::now()));
+        if let Err(e) = step(terminal, &mut app) {
+            tracing::warn!(%e, "terminal I/O failed; saving and exiting");
+            return app.save().wrap_err("saving comments");
         }
-        if event::poll(timeout)? {
-            match event::read()? {
-                Event::Key(key) => app.handle_key(key),
-                Event::Paste(text) => app.paste(&text),
-                Event::Resize(width, height) => app.resize(width, height),
-                _ => {}
-            }
+    }
+}
+
+/// One loop iteration: waits for input, then redraws if needed.
+fn step(terminal: &mut Tui, app: &mut App) -> io::Result<()> {
+    let mut timeout = Duration::from_millis(250);
+    if let Some(at) = app.next_blink() {
+        timeout = timeout.min(at.saturating_duration_since(Instant::now()));
+    }
+    if event::poll(timeout)? {
+        match event::read()? {
+            Event::Key(key) => app.handle_key(key),
+            Event::Paste(text) => app.paste(&text),
+            Event::Resize(width, height) => app.resize(width, height),
+            _ => {}
         }
-        app.blink(Instant::now());
-        if app.dirty {
-            terminal.draw(|frame| ui::draw(frame, &app))?;
-            app.dirty = false;
-        }
-        // "Diffing…" is on screen now; difft blocks for up to ~1 s on big files.
-        if app.pending.is_some() {
-            app.finish_open();
-            terminal.draw(|frame| ui::draw(frame, &app))?;
-            app.dirty = false;
-        }
-        if app.should_quit {
-            app.save().wrap_err("saving comments")?;
-            break;
-        }
+    }
+    app.blink(Instant::now());
+    if app.dirty {
+        terminal.draw(|frame| ui::draw(frame, app))?;
+        app.dirty = false;
+    }
+    // "Diffing…" is on screen now; difft blocks for up to ~1 s on big files.
+    if app.pending.is_some() {
+        app.finish_open();
+        terminal.draw(|frame| ui::draw(frame, app))?;
+        app.dirty = false;
     }
     Ok(())
 }

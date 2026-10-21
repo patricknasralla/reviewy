@@ -742,6 +742,7 @@ graph_limit = 500000         # DFT_GRAPH_LIMIT: vertices before difft falls back
 - **App errors:** `color-eyre` (`eyre::Result`) in `main`/`app`; `thiserror` enums in `git`, `diff`, `highlight`, `comments`.
 - **Panic hook:** restore terminal (leave alternate screen, disable raw mode), then delegate to color-eyre's hook. Errors returned from the event loop also restore the terminal before being reported.
 - **Signals:** `signal-hook::flag::register` for SIGTERM, SIGHUP, SIGINT onto an `Arc<AtomicBool>`; the loop saves and exits when set. In raw mode Ctrl-c is a key event (ignored), not SIGINT.
+- **Terminal closed** (window closed under a running reviewy): any terminal I/O error in the event loop (`step`) saves and exits like a signal. If restoring the terminal then fails, it is gone: `terminal` is leaked rather than dropped (its drop would print to the closed stderr and panic) and the exit is clean. crossterm's default Unix event source spins forever once the tty hangs up (0.29.0, `event/source/unix/mio.rs`: neither EOF nor EIO leaves its read loop), so reviewy uses the `use-dev-tty` source, which returns those errors.
 - **Recoverable per-file errors** (difft fails, unparsable JSON, unreadable file) show a status message; the app continues.
 - **Logging:** `tracing` + `tracing-subscriber` writing to `.reviewy/reviewy.log` (never stdout/stderr while the TUI is up). Opt-in: the subscriber is installed only when `REVIEWY_LOG` is set (an `EnvFilter` directive, e.g. `debug`); otherwise `tracing` macros are no-ops and no log file is created.
 
@@ -749,7 +750,7 @@ graph_limit = 500000         # DFT_GRAPH_LIMIT: vertices before difft falls back
 
 | Purpose | Crate |
 |---|---|
-| TUI | `ratatui` (feature `unstable-rendered-line-info` for `Paragraph::line_count`), `crossterm` |
+| TUI | `ratatui` (feature `unstable-rendered-line-info` for `Paragraph::line_count`), `crossterm` (feature `use-dev-tty`, which adds `filedescriptor`: see §14, terminal closed) |
 | CLI | `clap` (derive) |
 | Serialization | `serde`, `serde_json`, `toml` |
 | Errors | `color-eyre`, `thiserror` |
