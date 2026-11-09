@@ -12,7 +12,8 @@ use crate::diff::align::expand_tabs;
 use crate::vim::keys::{At, Command, Input};
 use crate::vim::motion::{self, Cursor, MotionCtx, Pos, TextView};
 use crate::vim::register::{Register, Registers};
-use crate::vim::{selection, wrap};
+use crate::vim::selection;
+use crate::vim::wrap::{self, Wrap};
 use buffer::Buffer;
 use undo::{Snapshot, Undo};
 
@@ -34,7 +35,7 @@ pub struct Editor {
     pub id: u32,
     pub title: String,
     buffer: Buffer,
-    /// `want` is the display column within the cursor's screen row, kept by vertical moves.
+    /// `want` is the screen x within the cursor's screen row, kept by vertical moves.
     cursor: Cursor,
     mode: Mode,
     undo: Undo,
@@ -42,7 +43,7 @@ pub struct Editor {
     insertion: Option<Snapshot>,
     /// First visible screen row.
     scroll: usize,
-    width: u16,
+    wrap: Wrap,
     height: u16,
 }
 
@@ -64,7 +65,7 @@ impl Editor {
             undo: Undo::new(undo_levels),
             insertion: None,
             scroll: 0,
-            width: 1,
+            wrap: Wrap { width: 1 },
             height: 1,
         };
         if mode == Mode::Insert {
@@ -82,7 +83,7 @@ impl Editor {
     }
 
     pub fn resize(&mut self, width: u16, height: u16) {
-        (self.width, self.height) = (width.max(1), height.max(1));
+        (self.wrap.width, self.height) = (width.max(1), height.max(1));
         self.settle();
     }
 
@@ -242,7 +243,11 @@ impl Editor {
     /// Visible screen rows as (line, byte range in the line), from the scroll position down.
     pub fn rows(&self) -> impl Iterator<Item = (usize, Range<usize>)> + '_ {
         (0..self.buffer.line_count())
-            .flat_map(|i| (self.segments(self.buffer.line(i)).into_iter()).map(move |r| (i, r)))
+            .flat_map(|i| {
+                self.segments(self.buffer.line(i))
+                    .into_iter()
+                    .map(move |r| (i, r))
+            })
             .skip(self.scroll)
     }
 
@@ -287,7 +292,7 @@ impl Editor {
     fn ctx(&self) -> MotionCtx {
         MotionCtx {
             height: usize::from(self.height),
-            wrap: Some(self.width),
+            wrap: Some(self.wrap),
         }
     }
 
@@ -374,9 +379,9 @@ impl Editor {
     /// Byte ranges of a line's screen rows. A line filling the width gets an empty trailing
     /// row, so a cursor at its end stays inside the box.
     fn segments(&self, line: &str) -> Vec<Range<usize>> {
-        let mut segments = wrap::wrap_line(line, self.width);
-        let last = segments[segments.len() - 1].clone();
-        if !line.is_empty() && width(&line[last]) >= usize::from(self.width) {
+        let mut segments = wrap::wrap_line(line, self.wrap);
+        let last = segments.len() - 1;
+        if !line.is_empty() && width(&line[segments[last].clone()]) >= self.wrap.row_width() {
             segments.push(line.len()..line.len());
         }
         segments
@@ -391,17 +396,18 @@ impl Editor {
         tops
     }
 
-    /// Cursor → (row within its line, display column).
+    /// Cursor → (row within its line, screen x).
     fn locate(&self) -> (usize, usize) {
         let Pos { line, col } = self.cursor.pos;
         let text = self.buffer.line(line);
         let at = buffer::byte(text, col);
         let segments = self.segments(text);
         let seg = (segments.iter().position(|r| at < r.end)).unwrap_or(segments.len() - 1);
-        (seg, width(&text[segments[seg].start..at]))
+        let x = width(&text[segments[seg].start..at]);
+        (seg, x)
     }
 
-    /// Char col at display column `want` in row `seg` of `line`; past the end, the row's last
+    /// Char col at screen x `want` in row `seg` of `line`; past the end, the row's last
     /// char (the line end on its last row).
     fn col_at(&self, line: usize, seg: usize, want: usize) -> usize {
         let text = self.buffer.line(line);
@@ -551,6 +557,17 @@ mod tests {
         press(&mut e, KeyCode::Up);
         press(&mut e, KeyCode::Up);
         assert_eq!(at(&e), (1, 5));
+    }
+
+    #[test]
+    fn typed_space_at_full_row_moves_last_word_down() {
+        let mut e = editor("ab cd", 6, Mode::Insert);
+        let ranges = |e: &Editor| e.rows().map(|(_, r)| r).collect::<Vec<_>>();
+        press(&mut e, KeyCode::Char('e'));
+        assert_eq!(ranges(&e), [0..6, 6..6]);
+        assert_eq!(e.cursor_cell(), Some((1, 0)));
+        press(&mut e, KeyCode::Char(' '));
+        assert_eq!(ranges(&e), [0..3, 3..7]);
     }
 
     #[test]

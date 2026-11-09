@@ -1,6 +1,6 @@
 //! Motions over read-only text.
 
-use super::wrap;
+use super::wrap::{self, Wrap};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Motion {
@@ -44,8 +44,8 @@ pub struct Cursor {
 pub struct MotionCtx {
     /// Viewport height in lines, for half-page motions.
     pub height: usize,
-    /// Wrap width; `Some` makes screen motions move by segment.
-    pub wrap: Option<u16>,
+    /// `Some` makes screen motions move by segment.
+    pub wrap: Option<Wrap>,
 }
 
 /// Applies `motion` with vim semantics. `count` is `None` when no count was typed.
@@ -106,7 +106,7 @@ pub fn apply(
         Motion::ScreenDown | Motion::ScreenUp => {
             let down = motion == Motion::ScreenDown;
             return match ctx.wrap {
-                Some(width) => screen(view, Pos { line, col }, n, down, width, cur.want),
+                Some(wrap) => screen(view, Pos { line, col }, n, down, wrap, cur.want),
                 None if down => vertical(view, line.saturating_add(n).min(last), cur.want),
                 None => vertical(view, line.saturating_sub(n), cur.want),
             };
@@ -115,7 +115,7 @@ pub fn apply(
     let pos = clamp(view, pos);
     let text = view.line(pos.line);
     let want = match ctx.wrap {
-        Some(width) => wrap::to_screen(text, width, pos.col).1,
+        Some(wrap) => wrap::to_screen(text, wrap, pos.col).1,
         None => wrap::display_col(text, pos.col),
     };
     Cursor { pos, want }
@@ -147,11 +147,11 @@ fn vertical(view: &dyn TextView, line: usize, want: usize) -> Cursor {
 }
 
 /// Moves `n` screen segments, crossing lines.
-fn screen(view: &dyn TextView, pos: Pos, n: usize, down: bool, width: u16, want: usize) -> Cursor {
-    let height = |line| wrap::line_height(view.line(line), width);
+fn screen(view: &dyn TextView, pos: Pos, n: usize, down: bool, wrap: Wrap, want: usize) -> Cursor {
+    let height = |line| wrap::line_height(view.line(line), wrap);
     let (mut line, (mut seg, _)) = (
         pos.line,
-        wrap::to_screen(view.line(pos.line), width, pos.col),
+        wrap::to_screen(view.line(pos.line), wrap, pos.col),
     );
     for _ in 0..n {
         if down && seg + 1 < height(line) {
@@ -167,7 +167,7 @@ fn screen(view: &dyn TextView, pos: Pos, n: usize, down: bool, width: u16, want:
             break;
         }
     }
-    let col = wrap::from_screen(view.line(line), width, seg, want);
+    let col = wrap::from_screen(view.line(line), wrap, seg, want);
     Cursor {
         pos: Pos { line, col },
         want,
@@ -414,7 +414,7 @@ mod tests {
         let view: &[&str] = &[&long, "y"];
         let ctx = MotionCtx {
             height: 10,
-            wrap: Some(10),
+            wrap: Some(Wrap { width: 10 }),
         };
         let r = run(view, &ctx, at(0, 3), &[Motion::ScreenDown; 3]);
         assert_eq!(r, [(0, 13), (0, 23), (1, 0)]);
