@@ -604,7 +604,7 @@ struct Excerpt { start: u32, lines: Vec<String> }  // contiguous lines from `sta
 - Old-side comments are flagged by `side = Old`; the preamble explains what that means.
 - **General comment:** at most one, on the change as a whole: `anchor` is `None` (`null` in JSON), `language` is `None` and the excerpt is empty. Its id is internal and never shown.
 - No staleness checks in v1. The base commit is stored for later verification.
-- **Tabs (v1):** excerpt text and cols come from tab-expanded lines, so tab-indented files get spaces and expanded columns. See `doc/tasks/v1-followups.md`.
+- **Tabs (v1):** excerpt text and cols come from tab-expanded lines, so tab-indented files get spaces and expanded columns. See `docs/v1-followups.md`.
 
 ### Lifecycle
 
