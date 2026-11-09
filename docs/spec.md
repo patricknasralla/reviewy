@@ -54,8 +54,8 @@ Design principles:
 - Single-column diff view.
 - Mouse interaction.
 - Merge conflict resolution UI.
-- Word-boundary soft wrap (wrap before a word instead of splitting it; needs care with markdown and symbols). Shared by the diff view and the editor (`vim/wrap.rs`).
-- Fix the sticky column under wrap: `motion::apply` stores `Cursor::want` relative to the screen segment, but logical vertical motions (`Down`/`Up` = `gj`/`gk`, `HalfPageDown`/`HalfPageUp`) read it as a whole-line column, so they land on the wrong column after the cursor sat on a later segment. Diff view and editor.
+- Fix the sticky column under wrap: `motion::apply` stores `Cursor::want` as the screen x within the segment's row (including the continuation offset, §10 Soft wrap), but logical vertical motions (`Down`/`Up` = `gj`/`gk`, `HalfPageDown`/`HalfPageUp`) read it as a whole-line column, so they land on the wrong column after the cursor sat on a later segment. Diff view and editor.
+- Non-Latin text in wrapping and cursor movement: grapheme clusters (ZWJ emoji, combining marks), per-script line breaking beyond what UAX #14 gives.
 
 ## 3. Usage workflow
 
@@ -167,7 +167,7 @@ src/
     motion.rs          Motion enum, TextView trait, motion application
     register.rs        Register, Registers (unnamed only), owned by App
     selection.rs       visual selection bounds and per-line ranges (diff view and editor)
-    wrap.rs            soft-wrap layout (shared by diff view, editor, gj/gk)
+    wrap.rs            soft-wrap layout: UAX #14 word wrap, continuation offset (shared by diff view, editor, gj/gk)
   app.rs               App struct; declares submodules
   app/
     state.rs           Mode, modal stack, pending file open
@@ -451,8 +451,34 @@ Bundled: `src/defaults/tokyo-night.json`, compiled in via `include_str!` in `src
 - Cursor line: `active_line` background on the active column; visual selections use the selection color (§9), drawn over all other backgrounds. The text cursor is a drawn block (§9 cursor color) over everything, shown only while the diff view has focus (no explorer, no modal). It blinks every `cursor_blink_ms` and turns solid again on any key or paste.
 - On first open, the cursor is on the first non-blank char of the first hunk (as `]` from the top; a file starting with a pure deletion opens on the old column). Reopening a file restores its cursor and scroll.
 - Vertical scroll is per screen line, so a wrapped row taller than the viewport scrolls by segment.
-- **Wrapping** (default on, `wrap` in config): each aligned row's height is the max of both sides' wrapped heights; the shorter side is padded. With `wrap = false`, lines are clipped and both columns scroll horizontally together to keep the text cursor visible.
-- Wrapping width uses `unicode-width`; layout is computed by `vim/wrap.rs`.
+- **Wrapping** (default on, `wrap` in config): word wrap as in Soft wrap below. Each aligned row's height is the max of both sides' wrapped heights; the shorter side is padded. With `wrap = false`, lines are clipped and both columns scroll horizontally together to keep the text cursor visible.
+- Continuation rows draw the `↪` marker at the text column's first cell (gutter stays blank). The row's line/cursor-line tint covers the marker and indent cells.
+
+### Soft wrap
+
+Shared by the diff view (when `wrap = true`) and the comment editor (always). Computed by `vim/wrap.rs`; there is no character-wrap mode.
+
+**Breaking.** Break opportunities come from UAX #14 (`unicode_linebreak::linebreaks`). Reviewy only uses where breaks are allowed; the layout is its own greedy pass over display widths (`unicode-width`, per `char`).
+
+- Break points include UAX #14's mandatory breaks (form feed, vertical tab, lone `\r`, NEL, U+2028/U+2029), which count as ordinary allowed breaks: they never force a row. The always-present break at the end of the line is ignored.
+- Consequences of UAX #14 (no extra rules): `this.`, `foo.bar`, `std::io`, `foo(bar` stay whole; `foo-│bar`, `src/│vim/│wrap.rs`; runs (`--`, `//`) break only after their last char; a run of spaces stays at the end of the earlier row.
+- The line is split into **pieces**, each running from one break opportunity to the next. A piece includes its trailing spaces, and they **count toward the width**: if a word fits but the space after it doesn't, the word moves down (as in VS Code, Zed and Neovim `linebreak`).
+- Greedy, per piece:
+  1. Fits in what is left of the current row → append.
+  2. Otherwise, the current row has text and the piece fits in an empty continuation row → start a new row with it.
+  3. Otherwise (wider than a whole row) → **fill the current row first**, then hard-break by char, row after row. Normal piece-by-piece breaking resumes with the next piece; no special handling.
+- Inside a hard break the existing char rules hold: a wide char that doesn't fit moves to the next row; a char wider than the row gets a row of its own.
+- An empty line is one row.
+
+**Continuation rows** (every row of a line after its first):
+
+- `ui.wrap_indent` (default 1) is the number of spaces after a fixed `↪` marker in the row's first cell, so continuation text starts at `offset = wrap_indent + 1` (`↪ text`). `wrap_indent = 0`: no marker, `offset = 0`.
+- Text width: first row `W`, continuation rows `W - offset` (`W` = the text column width: diff column `text`, editor inner width).
+- Too narrow: when `wrap_indent + 1 > W / 2` (integer division), `offset = 0` and no marker. Decided per column on each layout, so the two diff columns can differ.
+- The marker uses the theme's `editor.line_number` color.
+- The marker and indent are drawn only, never part of the text: yanks, the visual prefill and comment excerpts never contain them.
+- Visual-selection highlighting on a continuation row starts at the text (`offset`), not on the marker.
+- The marker is not configurable.
 
 ### Status line
 
@@ -476,7 +502,7 @@ For "Load existing", the question is "Found N comments from a previous session (
 ### Comment editor
 
 - Modal box over the diff view, titled e.g. `Comment - src/foo.rs:42-45 (new)`, or `Comment - General` for the general comment.
-- Own model (`src/editor.rs`, `Buffer` in `editor/buffer.rs`) drawn by `ui/editor.rs`; soft-wrapped via `vim/wrap.rs`. A line exactly filling the width gets an empty trailing screen row, so a cursor at its end stays in the box. Normal and visual modes show the drawn block cursor (blinking as in the diff view) and visual selections use the selection color (§9); Insert mode shows the real terminal cursor: a bar, set once at startup (blinking, or steady with `cursor_blink = false`) and colored with the theme cursor color via OSC 12. The terminal's own shape and color are restored on exit (including the panic hook) with `DefaultUserShape` and OSC 112.
+- Own model (`src/editor.rs`, `Buffer` in `editor/buffer.rs`) drawn by `ui/editor.rs`; soft-wrapped as in Soft wrap above, with `ui.wrap_indent`. A line whose last row exactly fills that row's width (`W` for a first row, `W - offset` for a continuation) gets an empty trailing screen row, so an Insert cursor at its end stays in the box. That row is special: no marker, cursor at column 0. Once a char is typed it is laid out normally (usually a word moves down onto a real continuation row with the marker). A typed trailing space that doesn't fit moves the last word down rather than creating this row. Normal and visual modes show the drawn block cursor (blinking as in the diff view) and visual selections use the selection color (§9); Insert mode shows the real terminal cursor: a bar, set once at startup (blinking, or steady with `cursor_blink = false`) and colored with the theme cursor color via OSC 12. The terminal's own shape and color are restored on exit (including the panic hook) with `DefaultUserShape` and OSC 112.
 - Lives on the modal stack. A new comment opens in Insert mode with the cursor at the end of the body (for a prefilled selection: the empty line below the fence); an existing comment opens in Normal mode at the end of the body.
 - **Normal mode** goes through the key parser (`Context::EditorNormal`): the shared motions (`h j k l w b e 0 $ gg G gj gk`, arrows, `Ctrl-d`/`Ctrl-u`; `j`/`k` by screen row, `gj`/`gk` by line), `i a I A o O` (counts ignored), `x`/`X` (with counts; never join lines), operators and `v`/`V` (below). Cursor col `<= len - 1`, also in visual modes.
 - **Insert mode** bypasses the parser: typing, Enter (newline), Backspace, Delete, arrows (Up/Down by screen row), Home/End, PageUp/PageDown. Tab and Ctrl-h do nothing. Cursor col `<= len`. Esc returns to Normal, moving the cursor one column left (not past col 0).
@@ -561,7 +587,23 @@ All normal-mode motions extend the selection. Selections cannot cross columns: `
   }
   ```
   plus a wrap layout for screen-row motions. Word classes follow vim: keyword chars (alphanumeric + `_`), other non-blank punctuation runs, whitespace.
-- `wrap.rs`: maps logical (line, col) ↔ screen rows for a given width; used by rendering and motions alike.
+- `wrap.rs`: maps logical (line, col) ↔ screen rows for a given `Wrap`; used by rendering and motions alike. Rules in §10 Soft wrap. Shape:
+  ```rust
+  #[derive(Clone, Copy)]
+  pub struct Wrap { pub width: u16, pub indent: u16 }   // width = W, indent = ui.wrap_indent
+  impl Wrap {
+      pub fn offset(self) -> usize;          // 0, or indent + 1 unless indent == 0 or indent + 1 > width / 2
+      pub fn row_x(self, seg: usize) -> usize; // 0 for seg 0, else offset()
+  }
+  pub fn wrap_line(line: &str, wrap: Wrap) -> Vec<Range<usize>>;           // byte ranges, as today
+  pub fn line_height(line: &str, wrap: Wrap) -> usize;
+  pub fn to_screen(line: &str, wrap: Wrap, col: usize) -> (usize, usize); // (seg, screen x incl. row_x)
+  pub fn from_screen(line: &str, wrap: Wrap, seg: usize, x: usize) -> usize; // x before row_x clamps to the seg's first char
+  ```
+  - Segments stay `Vec<Range<usize>>` byte ranges, so span splitting, `selection_cells` and the editor's row walk keep working on them; only x positions shift by `row_x`.
+  - `MotionCtx.wrap` becomes `Option<Wrap>` (built in `app/actions.rs`, `editor.rs`, `app/comment.rs`). `want` is therefore screen x including the offset; logical motions still read it as before (known bug, §2 Later).
+  - Diff view: `FileView::refresh_layout`/`height_of`/`focus` and `ui/diff_view.rs` take a `Wrap { width: col.text, indent: config.ui.wrap_indent }`. Drawing a continuation segment: marker at `text_rect.x`, text at `text_rect.x + row_x` with width `col.text - row_x`; selection cells and the cursor shift by `row_x`.
+  - Editor: holds a `Wrap` instead of `width` (`Editor::new` takes `wrap_indent`, from `app/comment.rs`; `resize` sets the width). `segments()` adds the trailing empty row (row_x 0, no marker) only on an exact fill. `locate`, `col_at`, `cursor_cell`, `vertical` and `scroll_to_cursor` account for each row's x; `rows()` also yields whether the row is a continuation, so `ui/editor.rs` draws the marker and shifts text, selection and cursor.
 - The diff view implements `TextView` over a side's lines (read-only); the comment editor implements it over its buffer.
 
 ## 12. Comments
@@ -714,7 +756,8 @@ Tables deep-merge per key; arrays replace. Unknown keys and wrong types are erro
 [ui]
 theme = "Tokyo Night Moon"           # variant name, or path to a theme JSON (relative to this file, or ~/...); unset → bundled default
 # theme_variant = "Tokyo Night Moon" # required only when `theme` is a path
-wrap = true
+wrap = true                          # diff view; the comment editor always wraps
+wrap_indent = 1                      # spaces after the ↪ continuation marker; 0 = no marker or indent
 tab_width = 4
 cursor_blink = true                  # block cursor blinks; terminal bar blinks (else steady)
 cursor_blink_ms = 500                # block cursor toggle interval
@@ -764,7 +807,7 @@ graph_limit = 500000         # DFT_GRAPH_LIMIT: vertices before difft falls back
 | Serialization | `serde`, `serde_json`, `toml` |
 | Errors | `color-eyre`, `thiserror` |
 | Highlighting | `tree-sitter` 0.27.1, `tree-sitter-highlight` 0.27.1, `tree-sitter-rust` 0.24.2, `tree-sitter-python` 0.25.0, `tree-sitter-c-sharp` 0.23.5, `tree-sitter-typescript` 0.23.2, `tree-sitter-javascript` 0.25.0 |
-| Text | `unicode-width`, `unicode-segmentation` |
+| Text | `unicode-width`, `unicode-segmentation`, `unicode-linebreak` (UAX #14 break opportunities for soft wrap; no dependencies) |
 | Paths | `etcetera` |
 | Ignore globs | `globset` |
 | Signals | `signal-hook` |
@@ -784,12 +827,14 @@ Highlighting versions were verified together (S3): one `tree-sitter` in the tree
     - `tab`: tab-indented line - raw-offset → tab-expanded conversion.
     - Trivial statuses (`created`, `deleted`, `unchanged`) and zero-width spans are inline JSON strings in the tests.
   - `vim/`: key parser (counts, chords, Esc), motions over fixture text, wrap layout ↔ screen-row motions.
+  - `vim/wrap.rs`: punctuation stays with its word (`this.`); a word whose trailing space overflows moves down; a word wider than the row fills the current row, hard-breaks, then normal breaking resumes; mandatory-break chars don't force a row; continuation rows are `W - offset` wide; offset dropped when `wrap_indent + 1 > W / 2` and for `wrap_indent = 0`; `to_screen`/`from_screen` round-trip with the offset.
+  - `editor.rs`: trailing empty row only on an exact fill, with no marker and the cursor at column 0.
   - `highlight/theme.rs`: Zed theme parsing, alpha blending, capture fallback.
   - `comments/`: JSON round-trip (lossless), overlap check, md rendering (insta snapshot), fence-length selection.
   - `comments/store.rs`: an empty set deletes both files.
   - `config.rs`: merge order, defaults, unknown keys, relative theme paths.
   - `app/`: hunk navigation, padding-skipping motions, column switches, comment targets per mode, create/close flow, save without empty-body comments, keeping a loaded set.
-- **UI snapshot tests:** ratatui `TestBackend` + `insta` for explorer, diff view (wrap on/off, added file, charwise selection), large-file modal, comment editor.
+- **UI snapshot tests:** ratatui `TestBackend` + `insta` for explorer, diff view (wrap on/off, added file, charwise selection), large-file modal, comment editor. The wrap-on and comment-editor snapshots show the `↪` marker and a selection on a continuation row.
 - **No integration tests in v1** (developer decision). The crate is binary-only; the pipeline was verified by hand on scratch repos.
 
 ## 17. Spikes
