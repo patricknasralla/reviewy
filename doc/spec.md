@@ -475,7 +475,7 @@ For "Load existing", the question is "Found N comments from a previous session (
 
 ### Comment editor
 
-- Modal box over the diff view, titled e.g. `Comment - src/foo.rs:42-45 (new)`.
+- Modal box over the diff view, titled e.g. `Comment - src/foo.rs:42-45 (new)`, or `Comment - General` for the general comment.
 - Own model (`src/editor.rs`, `Buffer` in `editor/buffer.rs`) drawn by `ui/editor.rs`; soft-wrapped via `vim/wrap.rs`. A line exactly filling the width gets an empty trailing screen row, so a cursor at its end stays in the box. Normal and visual modes show the drawn block cursor (blinking as in the diff view) and visual selections use the selection color (§9); Insert mode shows the real terminal cursor: a bar, set once at startup (blinking, or steady with `cursor_blink = false`) and colored with the theme cursor color via OSC 12. The terminal's own shape and color are restored on exit (including the panic hook) with `DefaultUserShape` and OSC 112.
 - Lives on the modal stack. A new comment opens in Insert mode with the cursor at the end of the body (for a prefilled selection: the empty line below the fence); an existing comment opens in Normal mode at the end of the body.
 - **Normal mode** goes through the key parser (`Context::EditorNormal`): the shared motions (`h j k l w b e 0 $ gg G gj gk`, arrows, `Ctrl-d`/`Ctrl-u`; `j`/`k` by screen row, `gj`/`gk` by line), `i a I A o O` (counts ignored), `x`/`X` (with counts; never join lines), operators and `v`/`V` (below). Cursor col `<= len - 1`, also in visual modes.
@@ -529,6 +529,7 @@ A text cursor on the active column (`active_line` background on its line). It ca
 | `V` | Visual line |
 | Enter | Commented line → edit comment; otherwise → create a comment on the cursor line (empty body) |
 | `D` | Delete comment on line (confirmation) |
+| `Ctrl-g` | Edit the general comment, or create it (empty body) |
 | Esc | Open explorer overlay |
 
 ### Visual / VisualLine
@@ -539,6 +540,7 @@ All normal-mode motions extend the selection. Selections cannot cross columns: `
 |---|---|
 | `v` / `V` | As vim: the same key again → Normal; the other key switches between charwise and linewise, keeping the anchor |
 | Enter | Create comment on the selection; prefill the editor with the selection as a fenced code block |
+| `Ctrl-g` | As in Normal mode; the selection is not prefilled and stays active under the editor |
 | Esc | Normal mode |
 
 ### Examples
@@ -576,7 +578,7 @@ struct CommentSet {
 
 struct Comment {
     id: u32,
-    anchor: Anchor,
+    anchor: Option<Anchor>,  // None: the general comment
     language: Option<String>, // fence tag
     excerpt: Excerpt,        // selected lines plus N lines of context either side
     body: String,
@@ -600,6 +602,7 @@ struct Excerpt { start: u32, lines: Vec<String> }  // contiguous lines from `sta
 - `context_lines` (default 3) controls N.
 - Overlap is allowed by the model (ranges are independent). **v1 UI refuses** to create a comment whose line range intersects an existing comment on the same file and side, with a status message. The v1.1 picker lifts this without model changes.
 - Old-side comments are flagged by `side = Old`; the preamble explains what that means.
+- **General comment:** at most one, on the change as a whole: `anchor` is `None` (`null` in JSON), `language` is `None` and the excerpt is empty. Its id is internal and never shown.
 - No staleness checks in v1. The base commit is stored for later verification.
 - **Tabs (v1):** excerpt text and cols come from tab-expanded lines, so tab-indented files get spaces and expanded columns. See `doc/tasks/v1-followups.md`.
 
@@ -608,6 +611,7 @@ struct Excerpt { start: u32, lines: Vec<String> }  // contiguous lines from `sta
 - **Create:** Enter in Normal mode on an uncommented line (starts empty), or Enter in Visual/VisualLine mode. Visual modes (including a single-line `V`) prefill the body with the selection in a fenced block tagged with the file's language; the fence is longer than any backtick run in the selection. Cursor is placed on a new line below the fence.
 - **Edit:** Normal-mode Enter on a commented line.
 - **Delete:** `D` in Normal mode (confirmation), or closing the editor with an empty body.
+- **General comment:** `Ctrl-g` in the file view (Normal or visual modes, not the explorer) creates it (opens in Insert) or reopens it (opens in Normal). Deleted from the editor only: `Ctrl-q` then `d`, or closing with an empty body.
 
 ### Persistence
 
@@ -648,7 +652,7 @@ Other selections: `{ "kind": "line", "line": 42 }`, `{ "kind": "lines", "start":
 
 ### `comments.md` layout
 
-ASCII only. Comments are sorted by file, then start line, then id.
+ASCII only. The general comment comes first, then comments sorted by file, then start line, then id.
 
 ````markdown
 # Review comments
@@ -656,6 +660,10 @@ ASCII only. Comments are sorted by file, then start line, then id.
 <preamble>
 
 Base commit: `3f2c9e1a` (HEAD)
+
+## General
+
+Split this change into smaller functions.
 
 ## src/foo.rs
 
@@ -679,12 +687,13 @@ This should return a Result rather than panicking.
 - New-side comments carry no side marker; old-side headings end with `(old: base commit version)`.
 - Excerpt: fenced with the language tag, line numbers right-aligned to the widest in the excerpt, `>` on selected lines. No separate `Selected:` line: the visual-mode prefill quotes the selection in the body.
 - Body verbatim after the excerpt.
+- `## General` holds only the body: no id, no excerpt. Left out when there is no general comment.
 
 ### Default preamble
 
 In `src/defaults/defaults.toml` (`comments.preamble`); replaceable in config.
 
-> These are code review comments on uncommitted changes. Each comment refers to a file and a line range on one side:
+> These are code review comments on uncommitted changes. A `## General` section, if present, applies to the change as a whole rather than to any file or line; read it first. Every other comment refers to a file and a line range on one side:
 >
 > - new (unmarked): the current working-tree file. Line numbers refer to the file as it is now.
 > - old (marked `(old: base commit version)`): the file as of the base commit. This code may since have been changed or removed - use it to understand what the reviewer is referring to; do not expect to find it in the working tree.

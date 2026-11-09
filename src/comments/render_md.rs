@@ -2,7 +2,7 @@
 
 use std::fmt::Write;
 
-use super::model::{Comment, CommentSet, Side, fence};
+use super::model::{Anchor, Comment, CommentSet, Side, fence};
 
 pub fn render(set: &CommentSet, preamble: &str) -> String {
     let short = set.base.commit.get(..8).unwrap_or(&set.base.commit);
@@ -10,36 +10,36 @@ pub fn render(set: &CommentSet, preamble: &str) -> String {
     let ref_name = &set.base.ref_name;
     let mut out =
         format!("# Review comments\n\n{preamble}\n\nBase commit: `{short}` ({ref_name})\n");
-    let mut comments: Vec<_> = set.comments.iter().collect();
-    comments.sort_by_key(|c| {
-        (
-            &c.anchor.file,
-            *c.anchor.selection.line_range().start(),
-            c.id,
-        )
-    });
+    if let Some(general) = set.general() {
+        let body = general.body.trim_end();
+        write!(out, "\n## General\n\n{body}\n").unwrap();
+    }
+    let mut comments: Vec<_> = (set.comments.iter())
+        .filter_map(|c| Some((c, c.anchor.as_ref()?)))
+        .collect();
+    comments.sort_by_key(|(c, a)| (&a.file, *a.selection.line_range().start(), c.id));
     let mut file = None;
-    for c in comments {
-        if file != Some(&c.anchor.file) {
-            file = Some(&c.anchor.file);
-            let path = c.anchor.file.display();
+    for (c, anchor) in comments {
+        if file != Some(&anchor.file) {
+            file = Some(&anchor.file);
+            let path = anchor.file.display();
             write!(out, "\n## {path}\n").unwrap();
         }
-        render_comment(&mut out, c);
+        render_comment(&mut out, c, anchor);
     }
     out
 }
 
-fn render_comment(out: &mut String, c: &Comment) {
-    let side = match c.anchor.side {
+fn render_comment(out: &mut String, c: &Comment, anchor: &Anchor) {
+    let side = match anchor.side {
         Side::New => "",
         Side::Old => " (old: base commit version)",
     };
-    let (id, selection) = (c.id, &c.anchor.selection);
+    let (id, selection) = (c.id, &anchor.selection);
     write!(out, "\n### #{id} - {selection}{side}\n\n").unwrap();
 
     let ex = &c.excerpt;
-    let selected = c.anchor.selection.line_range();
+    let selected = anchor.selection.line_range();
     let fence = fence(&ex.lines.join("\n"));
     let width = (ex.start as usize + ex.lines.len())
         .saturating_sub(1)
@@ -63,5 +63,14 @@ mod tests {
     #[test]
     fn render_two_files() {
         insta::assert_snapshot!(render(&sample_set(), "Preamble text."));
+    }
+
+    #[test]
+    fn general_comes_first_without_excerpt() {
+        let mut set = sample_set();
+        let id = set.add_general();
+        set.get_mut(id).unwrap().body = "Overall.\n".into();
+        let out = render(&set, "Preamble text.");
+        assert!(out.contains("(HEAD)\n\n## General\n\nOverall.\n\n## src/bar.py\n"));
     }
 }

@@ -26,8 +26,8 @@ pub enum Modal {
     Editor(Editor),
     DeleteComment(u32),
     CloseComment,
-    /// `Ctrl-q` in the editor: save, delete or keep editing comment `id`.
-    SaveComment(u32),
+    /// `Ctrl-q` in the editor: save, delete or keep editing the comment.
+    SaveComment,
 }
 
 /// A file whose content is read and that waits for difft.

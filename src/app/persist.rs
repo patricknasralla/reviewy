@@ -85,6 +85,21 @@ mod tests {
     }
 
     #[test]
+    fn general_comment_alone_is_saved_and_reloaded() {
+        let dir = tempfile::tempdir().unwrap();
+        let reviewy = dir.path().join(".reviewy");
+        fs::create_dir(&reviewy).unwrap();
+        let mut app = app(dir.path().to_owned());
+        let id = app.comments.add_general();
+        app.comments.get_mut(id).unwrap().body = "Overall.".into();
+
+        app.save().unwrap();
+        assert!(reviewy.join("comments.md").exists());
+        let saved = store::load(&reviewy).unwrap().unwrap();
+        assert_eq!(saved.general().unwrap().body, "Overall.");
+    }
+
+    #[test]
     fn keep_preserves_ids_and_next_id() {
         let mut app = app(Path::new("").to_owned());
         let mut loaded = CommentSet::new(Base {

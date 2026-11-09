@@ -84,12 +84,12 @@ pub fn draw(
             "Close comment?",
             "Enter: close / Esc: edit",
         ),
-        Modal::SaveComment(id) => confirm(
+        Modal::SaveComment => confirm(
             frame,
             area,
             theme,
             "Save comment",
-            &format!("Save comment #{id}?"),
+            "Save comment?",
             "Enter: save / d: delete / Esc: edit",
         ),
     }

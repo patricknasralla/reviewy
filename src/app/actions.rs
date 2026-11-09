@@ -31,6 +31,7 @@ pub enum Action {
     ToNormal,
     Comment,
     DeleteComment,
+    GeneralComment,
     Quit,
 }
 
@@ -45,9 +46,7 @@ impl App {
             return match command {
                 Command::Confirm => Some(Action::ModalConfirm),
                 Command::Escape => Some(Action::ModalCancel),
-                Command::Delete if matches!(top, Modal::SaveComment(_)) => {
-                    Some(Action::ModalDelete)
-                }
+                Command::Delete if matches!(top, Modal::SaveComment) => Some(Action::ModalDelete),
                 _ => None,
             };
         }
@@ -79,6 +78,7 @@ impl App {
                 Command::VisualLine => Some(Action::Visual { line: true }),
                 Command::Confirm => Some(Action::Comment),
                 Command::DeleteComment if self.mode == Mode::Normal => Some(Action::DeleteComment),
+                Command::GeneralComment => Some(Action::GeneralComment),
                 Command::Escape if self.mode == Mode::Normal => Some(Action::ToExplorer),
                 Command::Escape => Some(Action::ToNormal),
                 _ => None,
@@ -95,7 +95,7 @@ impl App {
                 Some(Modal::DeleteComment(id)) => {
                     self.comments.remove(id);
                 }
-                Some(Modal::CloseComment | Modal::SaveComment(_)) => self.close_editor(),
+                Some(Modal::CloseComment | Modal::SaveComment) => self.close_editor(),
                 // The editor takes its own keys (`App::handle_key`).
                 // Discard: `comments` is still the empty startup set.
                 Some(Modal::LoadExisting(_) | Modal::Editor(_)) | None => {}
@@ -161,6 +161,7 @@ impl App {
             Action::ToNormal => self.mode = Mode::Normal,
             Action::Comment => self.comment(),
             Action::DeleteComment => self.delete_comment(),
+            Action::GeneralComment => self.general_comment(),
             // Not over the editor: the comment is closed (saved or deleted) first.
             Action::Quit => {
                 if self.editor().is_none() && !matches!(self.modals.last(), Some(Modal::Quit)) {

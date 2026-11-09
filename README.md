@@ -59,11 +59,12 @@ Run `reviewy` anywhere inside a git repository with uncommitted changes. It comp
 | `v` / `V` | Visual / visual line |
 | Enter | Edit the comment on this line, or create one |
 | `D` | Delete the comment on this line |
+| `Ctrl-g` | Edit the general comment on the whole change, or create it |
 | Esc | Explorer |
 
 ### Visual / visual line
 
-Motions extend the selection. Enter creates a comment with the selection prefilled as a fenced code block. `v`/`V` toggle as in vim; Esc returns to Normal.
+Motions extend the selection. Enter creates a comment with the selection prefilled as a fenced code block. `Ctrl-g` works as in Normal, without prefilling. `v`/`V` toggle as in vim; Esc returns to Normal.
 
 ### Comment editor
 
@@ -86,7 +87,7 @@ Enter confirms, Esc cancels.
 Comments are written to `.reviewy/` in the repository root (the folder ignores itself with its own `.gitignore`):
 
 - `comments.json`: the source of truth.
-- `comments.md`: generated for agents, with instructions, the commented lines and their context.
+- `comments.md`: generated for agents, with instructions, the general comment under `## General`, then the commented lines and their context.
 
 They are saved on quit and when Reviewy receives SIGTERM, SIGHUP or SIGINT. If no comments are left, both files are deleted.
 
