@@ -461,7 +461,7 @@ Shared by the diff view (when `wrap = true`) and the comment editor (always). Co
 **Breaking.** Break opportunities come from UAX #14 (`unicode_linebreak::linebreaks`). Reviewy only uses where breaks are allowed; the layout is its own greedy pass over display widths (`unicode-width`, per `char`).
 
 - Break points include UAX #14's mandatory breaks (form feed, vertical tab, lone `\r`, NEL, U+2028/U+2029), which count as ordinary allowed breaks: they never force a row. The always-present break at the end of the line is ignored.
-- Consequences of UAX #14 (no extra rules): `this.`, `foo.bar`, `std::io`, `foo(bar` stay whole; `foo-│bar`, `src/│vim/│wrap.rs`; runs (`--`, `//`) break only after their last char; a run of spaces stays at the end of the earlier row.
+- Consequences of UAX #14 (no extra rules): `this.`, `foo.bar`, `std::io`, `foo(bar` stay whole; `foo-│bar`, `src/│vim/│wrap.rs`; runs (`--`, `//`) break only after their last char; a run of spaces stays at the end of the earlier row (unless the piece is wider than a whole row: then rule 3 hard-breaks it, spaces included).
 - The line is split into **pieces**, each running from one break opportunity to the next. A piece includes its trailing spaces, and they **count toward the width**: if a word fits but the space after it doesn't, the word moves down (as in VS Code, Zed and Neovim `linebreak`).
 - Greedy, per piece:
   1. Fits in what is left of the current row → append.

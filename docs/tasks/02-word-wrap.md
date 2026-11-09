@@ -4,13 +4,13 @@
 
 **Blocked by:** 01: Thread a `Wrap` layout parameter through the wrapping code
 
-**Status:** todo
+**Status:** done
 
-- [ ] `unicode-linebreak` added to `Cargo.toml` (approved by the developer); break opportunities come from `linebreaks()`, ignoring the end-of-line break.
-- [ ] `wrap_line` lays out pieces (break to break, trailing spaces included and counted) greedily: append if it fits, else new row if it fits an empty continuation row, else fill the current row and hard-break by char, then resume normal breaking.
-- [ ] Mandatory-break chars (form feed, vertical tab, lone `\r`, NEL, U+2028/U+2029) are ordinary break opportunities and never force a row.
-- [ ] Existing char rules still hold inside a hard break (wide char moves down; a char wider than the row gets its own row); an empty line is one row.
-- [ ] Unit tests in `vim/wrap.rs` cover the behaviours above (spec §16).
-- [ ] Wrap snapshots (`modified_wrap_on`, `comment_editor`, others affected) updated and reviewed: lines break at words.
-- [ ] Editor Insert mode: typing a space at the end of a full row moves the last word down; the trailing empty row still appears when a line exactly fills its row.
-- [ ] "Word Boundary Wrapping" removed from `docs/v1-followups.md`.
+- [x] `unicode-linebreak` added to `Cargo.toml` (approved by the developer); break opportunities come from `linebreaks()`, ignoring the end-of-line break.
+- [x] `wrap_line` lays out pieces (break to break, trailing spaces included and counted) greedily: append if it fits, else new row if it fits an empty continuation row, else fill the current row and hard-break by char, then resume normal breaking.
+- [x] Mandatory-break chars (form feed, vertical tab, lone `\r`, NEL, U+2028/U+2029) are ordinary break opportunities and never force a row.
+- [x] Existing char rules still hold inside a hard break (wide char moves down; a char wider than the row gets its own row); an empty line is one row.
+- [x] Unit tests in `vim/wrap.rs` cover the behaviours above (spec §16).
+- [x] Wrap snapshots (`modified_wrap_on`, `comment_editor`, others affected) updated and reviewed: lines break at words.
+- [x] Editor Insert mode: typing a space at the end of a full row moves the last word down; the trailing empty row still appears when a line exactly fills its row.
+- [x] "Word Boundary Wrapping" removed from `docs/v1-followups.md`.

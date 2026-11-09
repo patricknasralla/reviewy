@@ -575,6 +575,16 @@ mod tests {
     }
 
     #[test]
+    fn typed_space_at_full_row_moves_last_word_down() {
+        let mut e = editor("ab cd", 6, Mode::Insert);
+        let ranges = |e: &Editor| e.rows().map(|(_, r, _)| r).collect::<Vec<_>>();
+        press(&mut e, KeyCode::Char('e'));
+        assert_eq!(ranges(&e), [0..6, 6..6]);
+        press(&mut e, KeyCode::Char(' '));
+        assert_eq!(ranges(&e), [0..3, 3..7]);
+    }
+
+    #[test]
     fn opens_scrolled_to_the_top_when_the_body_fits() {
         let e = editor("a\nb\nc\n", 20, Mode::Insert);
         assert_eq!(e.rows().next(), Some((0, 0..1, 0)));
