@@ -74,7 +74,8 @@ pub struct Excerpt {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Comment {
     pub id: u32,
-    pub anchor: Anchor,
+    /// `None` for the general comment, whose language and excerpt are empty.
+    pub anchor: Option<Anchor>,
     pub language: Option<String>,
     pub excerpt: Excerpt,
     pub body: String,
@@ -141,7 +142,10 @@ impl Excerpt {
 impl Comment {
     /// The selected lines joined with `\n`; for `Chars`, only the selected chars.
     pub fn selected_text(&self) -> String {
-        let sel = &self.anchor.selection;
+        let Some(anchor) = &self.anchor else {
+            return String::new();
+        };
+        let sel = &anchor.selection;
         let lines = sel.line_range().map(|n| {
             let text = self.excerpt.line(n);
             let (from, to) = match *sel {
@@ -175,12 +179,33 @@ impl CommentSet {
         self.next_id += 1;
         self.comments.push(Comment {
             id,
-            anchor: draft.anchor,
+            anchor: Some(draft.anchor),
             language: draft.language,
             excerpt: draft.excerpt,
             body: draft.body,
         });
         id
+    }
+
+    /// Adds an empty general comment; callers check `general` first, as there is only one.
+    pub fn add_general(&mut self) -> u32 {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.comments.push(Comment {
+            id,
+            anchor: None,
+            language: None,
+            excerpt: Excerpt {
+                start: 1,
+                lines: Vec::new(),
+            },
+            body: String::new(),
+        });
+        id
+    }
+
+    pub fn general(&self) -> Option<&Comment> {
+        self.comments.iter().find(|c| c.anchor.is_none())
     }
 
     pub fn get(&self, id: u32) -> Option<&Comment> {
@@ -199,9 +224,9 @@ impl CommentSet {
     /// First comment covering 1-based `line`.
     pub fn at(&self, file: &Path, side: Side, line: u32) -> Option<&Comment> {
         self.comments.iter().find(|c| {
-            c.anchor.file == file
-                && c.anchor.side == side
-                && c.anchor.selection.line_range().contains(&line)
+            c.anchor.as_ref().is_some_and(|a| {
+                a.file == file && a.side == side && a.selection.line_range().contains(&line)
+            })
         })
     }
 
@@ -211,11 +236,13 @@ impl CommentSet {
         self.comments
             .iter()
             .find(|c| {
-                let other = c.anchor.selection.line_range();
-                c.anchor.file == anchor.file
-                    && c.anchor.side == anchor.side
-                    && range.start() <= other.end()
-                    && other.start() <= range.end()
+                c.anchor.as_ref().is_some_and(|a| {
+                    let other = a.selection.line_range();
+                    a.file == anchor.file
+                        && a.side == anchor.side
+                        && range.start() <= other.end()
+                        && other.start() <= range.end()
+                })
             })
             .map(|c| c.id)
     }
@@ -225,11 +252,13 @@ impl CommentSet {
         self.comments
             .iter()
             .filter(|c| {
-                c.anchor.file
-                    == match c.anchor.side {
-                        Side::Old => old,
-                        Side::New => new,
-                    }
+                c.anchor.as_ref().is_some_and(|a| {
+                    a.file
+                        == match a.side {
+                            Side::Old => old,
+                            Side::New => new,
+                        }
+                })
             })
             .count()
     }

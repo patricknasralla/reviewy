@@ -28,7 +28,7 @@ paths = []  # globs, repo-relative
 context_lines = 3
 # Instructions at the top of comments.md.
 preamble = """
-These are code review comments on uncommitted changes. Each comment refers to a file and a line range on one side:
+These are code review comments on uncommitted changes. A `## General` section, if present, applies to the change as a whole rather than to any file or line; read it first. Every other comment refers to a file and a line range on one side:
 
 - new (unmarked): the current working-tree file. Line numbers refer to the file as it is now.
 - old (marked `(old: base commit version)`): the file as of the base commit. This code may since have been changed or removed - use it to understand what the reviewer is referring to; do not expect to find it in the working tree.

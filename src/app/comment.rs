@@ -47,6 +47,20 @@ impl App {
         self.open_editor(id, editor::Mode::Insert);
     }
 
+    /// Ctrl-g: edit the general comment, or create it.
+    pub(super) fn general_comment(&mut self) {
+        if self.view().is_none() {
+            return;
+        }
+        match self.comments.general().map(|c| c.id) {
+            Some(id) => self.open_editor(id, editor::Mode::Normal),
+            None => {
+                let id = self.comments.add_general();
+                self.open_editor(id, editor::Mode::Insert);
+            }
+        }
+    }
+
     pub(super) fn delete_comment(&mut self) {
         match self.comment_at_cursor() {
             Some(id) => self.modals.push(Modal::DeleteComment(id)),
@@ -65,12 +79,12 @@ impl App {
         }
         // Ctrl-q asks to save or delete; an empty comment is just closed (and so removed).
         if key.code == KeyCode::Char('q') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            let (id, empty) = (editor.id, editor.text().trim().is_empty());
+            let empty = editor.text().trim().is_empty();
             self.keys = Default::default();
             if empty {
                 self.close_editor();
             } else {
-                self.modals.push(Modal::SaveComment(id));
+                self.modals.push(Modal::SaveComment);
             }
             return;
         }
@@ -127,18 +141,7 @@ impl App {
 
     fn open_editor(&mut self, id: u32, mode: editor::Mode) {
         let comment = self.comments.get(id).unwrap();
-        let anchor = &comment.anchor;
-        let range = anchor.selection.line_range();
-        let lines = if range.start() == range.end() {
-            range.start().to_string()
-        } else {
-            format!("{}-{}", range.start(), range.end())
-        };
-        let side = match anchor.side {
-            Side::Old => "old",
-            Side::New => "new",
-        };
-        let title = format!("Comment - {}:{lines} ({side})", anchor.file.display());
+        let title = (comment.anchor.as_ref()).map_or("Comment - General".into(), editor_title);
         let levels = self.config.editor.undo_levels;
         let mut editor = Editor::new(id, title, &comment.body, mode, levels);
         let area = ui::editor::inner(self.view_area());
@@ -169,6 +172,20 @@ pub fn side_path(file: &ChangedFile, side: Side) -> &Path {
         Side::Old => file.old_path(),
         Side::New => &file.path,
     }
+}
+
+fn editor_title(anchor: &Anchor) -> String {
+    let range = anchor.selection.line_range();
+    let lines = if range.start() == range.end() {
+        range.start().to_string()
+    } else {
+        format!("{}-{}", range.start(), range.end())
+    };
+    let side = match anchor.side {
+        Side::Old => "old",
+        Side::New => "new",
+    };
+    format!("Comment - {}:{lines} ({side})", anchor.file.display())
 }
 
 /// What Enter comments on; `None` in the explorer or when the side has no lines.
@@ -305,7 +322,7 @@ mod tests {
 
         let comment = &app.comments.comments[0];
         assert_eq!(
-            comment.anchor.selection,
+            comment.anchor.as_ref().unwrap().selection,
             Selection::Lines { start: 1, end: 2 }
         );
         assert_eq!(comment.body, "```rust\nlet value = 1;\ncall(value);\n```\n");
@@ -320,6 +337,46 @@ mod tests {
         press(&mut app, KeyCode::Enter);
         assert!(app.modals.is_empty());
         assert!(app.comments.comments.is_empty());
+    }
+
+    #[test]
+    fn general_comment_is_single_and_unanchored() {
+        let mut app = app();
+        let ctrl_g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL);
+        let mode = |app: &App| app.editor().unwrap().mode();
+        let close = |app: &mut App| {
+            press(app, KeyCode::Esc);
+            press(app, KeyCode::Enter);
+            assert!(app.modals.is_empty());
+        };
+
+        // Not from the explorer.
+        press(&mut app, KeyCode::Esc);
+        app.handle_key(ctrl_g);
+        assert!(app.modals.is_empty());
+        press(&mut app, KeyCode::Esc);
+
+        app.handle_key(ctrl_g);
+        assert_eq!(mode(&app), editor::Mode::Insert);
+        press(&mut app, KeyCode::Char('x'));
+        press(&mut app, KeyCode::Esc);
+        close(&mut app);
+
+        let path = Path::new("a.rs");
+        assert_eq!(app.comments.count_for(path, path), 0);
+        assert!(app.comments.at(path, Side::New, 1).is_none());
+
+        // Reopens the same comment; emptied, it is removed.
+        app.handle_key(ctrl_g);
+        assert_eq!(mode(&app), editor::Mode::Normal);
+        assert_eq!(app.comments.comments.len(), 1);
+        assert_eq!(app.comments.general().unwrap().body, "x");
+        press(&mut app, KeyCode::Char('x'));
+        close(&mut app);
+        assert!(app.comments.comments.is_empty());
+
+        app.handle_key(ctrl_g);
+        assert_eq!(mode(&app), editor::Mode::Insert);
     }
 
     #[test]
@@ -348,10 +405,10 @@ mod tests {
         press(&mut app, KeyCode::Enter);
         assert_eq!(mode(&app), editor::Mode::Normal);
         app.handle_key(ctrl_q);
-        assert!(top_is(&app, |m| matches!(m, Modal::SaveComment(_))));
+        assert!(top_is(&app, |m| matches!(m, Modal::SaveComment)));
         // A second Ctrl-q can't quit past the open comment.
         app.handle_key(ctrl_q);
-        assert!(top_is(&app, |m| matches!(m, Modal::SaveComment(_))));
+        assert!(top_is(&app, |m| matches!(m, Modal::SaveComment)));
         press(&mut app, KeyCode::Enter);
         assert!(app.modals.is_empty());
         assert_eq!(app.comments.comments.len(), 1);
