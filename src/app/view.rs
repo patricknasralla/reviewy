@@ -6,7 +6,7 @@ use crate::comments::model::Side;
 use crate::diff::model::{FileDiff, LineKind, SideText};
 use crate::ui::diff_view::columns;
 use crate::vim::motion::{self, Cursor, Motion, MotionCtx, Pos};
-use crate::vim::wrap;
+use crate::vim::wrap::{self, Wrap};
 
 const SCROLL_MARGIN: usize = 3;
 
@@ -34,8 +34,8 @@ struct Layout {
     key: Option<(u16, bool)>,
     /// Screen line where each row starts; one extra entry for the end.
     tops: Vec<usize>,
-    /// Text widths of the (old, new) columns.
-    text: [u16; 2],
+    /// Wrap layouts of the (old, new) text columns.
+    wraps: [Wrap; 2],
 }
 
 impl FileView {
@@ -88,9 +88,14 @@ impl FileView {
         &self.layout.tops
     }
 
-    /// Text width of the active column; valid after `refresh_layout`.
-    pub fn text_width(&self) -> u16 {
-        self.layout.text[index(self.side)]
+    /// Wrap layout of `side`'s text column; valid after `refresh_layout`.
+    pub fn wrap_of(&self, side: Side) -> Wrap {
+        self.layout.wraps[index(side)]
+    }
+
+    /// Wrap layout of the active column.
+    pub fn wrap(&self) -> Wrap {
+        self.wrap_of(self.side)
     }
 
     /// Cursor motion over the active side; the cursor row follows the line.
@@ -140,17 +145,16 @@ impl FileView {
     /// view (its screen line, and its column when not wrapping).
     pub fn refresh_layout(&mut self, width: u16, height: usize, wrap: bool) {
         if self.layout.key != Some((width, wrap)) {
-            let [l, r] = columns(&self.diff, width);
+            let [l, r] = columns(&self.diff, width).map(|col| Wrap {
+                width: col.text,
+                indent: 0,
+            });
             let mut tops = Vec::with_capacity(self.diff.rows.len() + 1);
             let mut top = 0;
             tops.push(top);
             for row in &self.diff.rows {
                 top += if wrap {
-                    height_of(&self.diff.lhs, row.lhs, l.text).max(height_of(
-                        &self.diff.rhs,
-                        row.rhs,
-                        r.text,
-                    ))
+                    height_of(&self.diff.lhs, row.lhs, l).max(height_of(&self.diff.rhs, row.rhs, r))
                 } else {
                     1
                 };
@@ -159,7 +163,7 @@ impl FileView {
             self.layout = Layout {
                 key: Some((width, wrap)),
                 tops,
-                text: [l.text, r.text],
+                wraps: [l, r],
             };
         }
         if self.diff.rows.is_empty() {
@@ -234,7 +238,7 @@ impl FileView {
     fn focus(&self, wrap: bool) -> Range<usize> {
         let tops = &self.layout.tops;
         let seg = match self.cursor_text() {
-            Some(line) if wrap => wrap::to_screen(line, self.text_width(), self.cursor.pos.col).0,
+            Some(line) if wrap => wrap::to_screen(line, self.wrap(), self.cursor.pos.col).0,
             _ => 0,
         };
         let top = tops[self.row] + seg;
@@ -267,7 +271,7 @@ impl FileView {
         let col = self.cursor.pos.col;
         let start = wrap::display_col(line, col);
         let end = wrap::display_col(line, col + 1).max(start + 1);
-        let width = usize::from(self.text_width());
+        let width = usize::from(self.wrap().width);
         if start < self.hscroll {
             self.hscroll = start;
         } else if end > self.hscroll + width {
@@ -319,9 +323,9 @@ fn rows_of(diff: &FileDiff, side: Side) -> Vec<usize> {
         .collect()
 }
 
-fn height_of(side: &Option<SideText>, line: Option<u32>, width: u16) -> usize {
+fn height_of(side: &Option<SideText>, line: Option<u32>, wrap: Wrap) -> usize {
     match (side, line) {
-        (Some(side), Some(i)) => wrap::line_height(&side.lines[i as usize], width),
+        (Some(side), Some(i)) => wrap::line_height(&side.lines[i as usize], wrap),
         _ => 1,
     }
 }
@@ -408,7 +412,7 @@ mod tests {
         view.refresh_layout(30, 20, true);
         let ctx = MotionCtx {
             height: 20,
-            wrap: Some(view.text_width()),
+            wrap: Some(view.wrap()),
         };
         view.cursor_motion(Motion::ScreenDown, None, &ctx);
         assert_eq!((view.row, view.cursor.pos), (0, Pos { line: 0, col: 10 }));

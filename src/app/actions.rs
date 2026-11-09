@@ -134,7 +134,7 @@ impl App {
                 if let Some(view) = self.view_mut() {
                     let ctx = MotionCtx {
                         height,
-                        wrap: wrap.then(|| view.text_width()),
+                        wrap: wrap.then(|| view.wrap()),
                     };
                     view.cursor_motion(motion, count, &ctx);
                 }

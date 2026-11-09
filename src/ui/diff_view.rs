@@ -16,7 +16,8 @@ use crate::comments::model::Side;
 use crate::diff::model::{FileDiff, LineKind, SideText};
 use crate::highlight::Theme;
 use crate::highlight::highlighter::StyledSpan;
-use crate::vim::{selection, wrap};
+use crate::vim::selection;
+use crate::vim::wrap::{self, Wrap};
 
 /// Gutter cells besides the line number: leading space, change marker, comment slot, space.
 const GUTTER_EXTRA: u16 = 4;
@@ -65,7 +66,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
             let active = view.side == side;
             let cell = Cell {
                 theme: &app.theme,
-                wrap: app.config.ui.wrap,
+                wrap: app.config.ui.wrap.then(|| view.wrap_of(side)),
                 hscroll: view.hscroll,
                 skip,
                 side,
@@ -118,7 +119,8 @@ fn marks(mode: Mode, view: &FileView, line: usize, show_cursor: bool) -> Marks {
 
 struct Cell<'a> {
     theme: &'a Theme,
-    wrap: bool,
+    /// `None` clips lines and scrolls horizontally.
+    wrap: Option<Wrap>,
     hscroll: usize,
     /// Leading screen lines of the row scrolled out of view.
     skip: usize,
@@ -184,10 +186,9 @@ impl Cell<'_> {
         }
 
         let line = &text.lines[i];
-        let segments = if self.wrap {
-            wrap::wrap_line(line, col.text)
-        } else {
-            std::iter::once(clip_start(line, self.hscroll)..line.len()).collect()
+        let segments = match self.wrap {
+            Some(wrap) => wrap::wrap_line(line, wrap),
+            None => std::iter::once(clip_start(line, self.hscroll)..line.len()).collect(),
         };
         let base = Style::new().fg(theme.foreground).bg(bg);
         let selected = Style::new().bg(theme.selection);
@@ -197,6 +198,8 @@ impl Cell<'_> {
                 continue;
             }
             let y = rect.y + (k - self.skip) as u16;
+            let row_x = self.wrap.map_or(0, |w| w.row_x(k)) as u16;
+            let (x, max) = (text_rect.x + row_x, col.text.saturating_sub(row_x));
             let spans = spans(
                 line,
                 seg.clone(),
@@ -205,25 +208,25 @@ impl Cell<'_> {
                 base,
                 token_tint,
             );
-            buf.set_line(text_rect.x, y, &Line::from(spans), col.text);
+            buf.set_line(x, y, &Line::from(spans), max);
             let sel = marks.selection.clone();
-            let cells =
-                sel.and_then(|sel| super::selection_cells(line, seg.clone(), sel, col.text));
+            let cells = sel.and_then(|sel| super::selection_cells(line, seg.clone(), sel, max));
             if let Some(cells) = cells {
-                let rect = Rect::new(text_rect.x + cells.start, y, cells.len() as u16, 1);
+                let rect = Rect::new(x + cells.start, y, cells.len() as u16, 1);
                 buf.set_style(rect, selected);
             }
         }
 
         if let Some(c) = marks.cursor {
-            let (seg, x) = if self.wrap {
-                wrap::to_screen(line, col.text, c)
-            } else {
-                let start = clip_start(line, self.hscroll);
-                (
-                    0,
-                    wrap::display_col(line, c) - width(&line[..start]) as usize,
-                )
+            let (seg, x) = match self.wrap {
+                Some(wrap) => wrap::to_screen(line, wrap, c),
+                None => {
+                    let start = clip_start(line, self.hscroll);
+                    (
+                        0,
+                        wrap::display_col(line, c) - width(&line[..start]) as usize,
+                    )
+                }
             };
             if visible.contains(&seg) && x < usize::from(col.text) {
                 let pos = Position::new(text_rect.x + x as u16, rect.y + (seg - self.skip) as u16);

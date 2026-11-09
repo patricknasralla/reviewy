@@ -594,6 +594,7 @@ All normal-mode motions extend the selection. Selections cannot cross columns: `
   impl Wrap {
       pub fn offset(self) -> usize;          // 0, or indent + 1 unless indent == 0 or indent + 1 > width / 2
       pub fn row_x(self, seg: usize) -> usize; // 0 for seg 0, else offset()
+      pub fn row_width(self, seg: usize) -> usize; // width - row_x(seg), at least 1
   }
   pub fn wrap_line(line: &str, wrap: Wrap) -> Vec<Range<usize>>;           // byte ranges, as today
   pub fn line_height(line: &str, wrap: Wrap) -> usize;
@@ -603,7 +604,7 @@ All normal-mode motions extend the selection. Selections cannot cross columns: `
   - Segments stay `Vec<Range<usize>>` byte ranges, so span splitting, `selection_cells` and the editor's row walk keep working on them; only x positions shift by `row_x`.
   - `MotionCtx.wrap` becomes `Option<Wrap>` (built in `app/actions.rs`, `editor.rs`, `app/comment.rs`). `want` is therefore screen x including the offset; logical motions still read it as before (known bug, §2 Later).
   - Diff view: `FileView::refresh_layout`/`height_of`/`focus` and `ui/diff_view.rs` take a `Wrap { width: col.text, indent: config.ui.wrap_indent }`. Drawing a continuation segment: marker at `text_rect.x`, text at `text_rect.x + row_x` with width `col.text - row_x`; selection cells and the cursor shift by `row_x`.
-  - Editor: holds a `Wrap` instead of `width` (`Editor::new` takes `wrap_indent`, from `app/comment.rs`; `resize` sets the width). `segments()` adds the trailing empty row (row_x 0, no marker) only on an exact fill. `locate`, `col_at`, `cursor_cell`, `vertical` and `scroll_to_cursor` account for each row's x; `rows()` also yields whether the row is a continuation, so `ui/editor.rs` draws the marker and shifts text, selection and cursor.
+  - Editor: holds a `Wrap` instead of `width` (`Editor::new` takes `wrap_indent`, from `app/comment.rs`; `resize` sets the width). `segments()` adds the trailing empty row (row_x 0, no marker) only on an exact fill. `locate`, `col_at`, `cursor_cell`, `vertical` and `scroll_to_cursor` account for each row's x; `rows()` also yields each row's x (0 on a line's first row and the trailing empty row, so `x > 0` marks a continuation), so `ui/editor.rs` draws the marker and shifts text, selection and cursor.
 - The diff view implements `TextView` over a side's lines (read-only); the comment editor implements it over its buffer.
 
 ## 12. Comments

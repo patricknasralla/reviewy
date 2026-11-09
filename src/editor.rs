@@ -12,7 +12,8 @@ use crate::diff::align::expand_tabs;
 use crate::vim::keys::{At, Command, Input};
 use crate::vim::motion::{self, Cursor, MotionCtx, Pos, TextView};
 use crate::vim::register::{Register, Registers};
-use crate::vim::{selection, wrap};
+use crate::vim::selection;
+use crate::vim::wrap::{self, Wrap};
 use buffer::Buffer;
 use undo::{Snapshot, Undo};
 
@@ -34,7 +35,7 @@ pub struct Editor {
     pub id: u32,
     pub title: String,
     buffer: Buffer,
-    /// `want` is the display column within the cursor's screen row, kept by vertical moves.
+    /// `want` is the screen x within the cursor's screen row, kept by vertical moves.
     cursor: Cursor,
     mode: Mode,
     undo: Undo,
@@ -42,7 +43,7 @@ pub struct Editor {
     insertion: Option<Snapshot>,
     /// First visible screen row.
     scroll: usize,
-    width: u16,
+    wrap: Wrap,
     height: u16,
 }
 
@@ -64,7 +65,10 @@ impl Editor {
             undo: Undo::new(undo_levels),
             insertion: None,
             scroll: 0,
-            width: 1,
+            wrap: Wrap {
+                width: 1,
+                indent: 0,
+            },
             height: 1,
         };
         if mode == Mode::Insert {
@@ -82,7 +86,7 @@ impl Editor {
     }
 
     pub fn resize(&mut self, width: u16, height: u16) {
-        (self.width, self.height) = (width.max(1), height.max(1));
+        (self.wrap.width, self.height) = (width.max(1), height.max(1));
         self.settle();
     }
 
@@ -239,10 +243,16 @@ impl Editor {
         self.commit(before);
     }
 
-    /// Visible screen rows as (line, byte range in the line), from the scroll position down.
-    pub fn rows(&self) -> impl Iterator<Item = (usize, Range<usize>)> + '_ {
+    /// Visible screen rows from the scroll position down, as (line, byte range, screen x of the
+    /// row's text). The x is 0 on a line's first row and on the trailing empty row.
+    pub fn rows(&self) -> impl Iterator<Item = (usize, Range<usize>, usize)> + '_ {
         (0..self.buffer.line_count())
-            .flat_map(|i| (self.segments(self.buffer.line(i)).into_iter()).map(move |r| (i, r)))
+            .flat_map(|i| {
+                let segments = self.segments(self.buffer.line(i));
+                (0..segments.len())
+                    .map(|k| (i, segments[k].clone(), self.segment_x(&segments, k)))
+                    .collect::<Vec<_>>()
+            })
             .skip(self.scroll)
     }
 
@@ -287,7 +297,7 @@ impl Editor {
     fn ctx(&self) -> MotionCtx {
         MotionCtx {
             height: usize::from(self.height),
-            wrap: Some(self.width),
+            wrap: Some(self.wrap),
         }
     }
 
@@ -374,12 +384,21 @@ impl Editor {
     /// Byte ranges of a line's screen rows. A line filling the width gets an empty trailing
     /// row, so a cursor at its end stays inside the box.
     fn segments(&self, line: &str) -> Vec<Range<usize>> {
-        let mut segments = wrap::wrap_line(line, self.width);
-        let last = segments[segments.len() - 1].clone();
-        if !line.is_empty() && width(&line[last]) >= usize::from(self.width) {
+        let mut segments = wrap::wrap_line(line, self.wrap);
+        let last = segments.len() - 1;
+        if !line.is_empty() && width(&line[segments[last].clone()]) >= self.wrap.row_width(last) {
             segments.push(line.len()..line.len());
         }
         segments
+    }
+
+    /// Screen x where row `seg` of `segments` starts; 0 for the trailing empty row.
+    fn segment_x(&self, segments: &[Range<usize>], seg: usize) -> usize {
+        if segments[seg].is_empty() {
+            0
+        } else {
+            self.wrap.row_x(seg)
+        }
     }
 
     /// Screen row where each line starts, then the total row count.
@@ -391,21 +410,23 @@ impl Editor {
         tops
     }
 
-    /// Cursor → (row within its line, display column).
+    /// Cursor → (row within its line, screen x).
     fn locate(&self) -> (usize, usize) {
         let Pos { line, col } = self.cursor.pos;
         let text = self.buffer.line(line);
         let at = buffer::byte(text, col);
         let segments = self.segments(text);
         let seg = (segments.iter().position(|r| at < r.end)).unwrap_or(segments.len() - 1);
-        (seg, width(&text[segments[seg].start..at]))
+        let x = width(&text[segments[seg].start..at]);
+        (seg, self.segment_x(&segments, seg) + x)
     }
 
-    /// Char col at display column `want` in row `seg` of `line`; past the end, the row's last
+    /// Char col at screen x `want` in row `seg` of `line`; past the end, the row's last
     /// char (the line end on its last row).
     fn col_at(&self, line: usize, seg: usize, want: usize) -> usize {
         let text = self.buffer.line(line);
         let segments = self.segments(text);
+        let want = want.saturating_sub(self.segment_x(&segments, seg));
         let range = segments[seg].clone();
         let before = text[..range.start].chars().count();
         let mut x = 0;
@@ -556,7 +577,7 @@ mod tests {
     #[test]
     fn opens_scrolled_to_the_top_when_the_body_fits() {
         let e = editor("a\nb\nc\n", 20, Mode::Insert);
-        assert_eq!(e.rows().next(), Some((0, 0..1)));
+        assert_eq!(e.rows().next(), Some((0, 0..1, 0)));
         assert_eq!(e.cursor_cell(), Some((3, 0)));
     }
 
