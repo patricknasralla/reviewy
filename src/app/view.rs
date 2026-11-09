@@ -145,10 +145,7 @@ impl FileView {
     /// view (its screen line, and its column when not wrapping).
     pub fn refresh_layout(&mut self, width: u16, height: usize, wrap: bool) {
         if self.layout.key != Some((width, wrap)) {
-            let [l, r] = columns(&self.diff, width).map(|col| Wrap {
-                width: col.text,
-                indent: 0,
-            });
+            let [l, r] = columns(&self.diff, width).map(|col| Wrap { width: col.text });
             let mut tops = Vec::with_capacity(self.diff.rows.len() + 1);
             let mut top = 0;
             tops.push(top);

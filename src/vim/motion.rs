@@ -414,10 +414,7 @@ mod tests {
         let view: &[&str] = &[&long, "y"];
         let ctx = MotionCtx {
             height: 10,
-            wrap: Some(Wrap {
-                width: 10,
-                indent: 0,
-            }),
+            wrap: Some(Wrap { width: 10 }),
         };
         let r = run(view, &ctx, at(0, 3), &[Motion::ScreenDown; 3]);
         assert_eq!(r, [(0, 13), (0, 23), (1, 0)]);

@@ -5,7 +5,7 @@ expression: backend
 " 1   fn main() {                         1   fn main() {                        "
 " 2~      let x = 1;                      2~      let x = 2;                     "
 "                                         3+      let long = "this line is long  "
-"                                             enough to wrap in a column";       "
+"                                         ↪   enough to wrap in a column";       "
 " 3       println!("{x}");                4       println!("{x}");               "
 " 4   }                                   5   }                                  "
 "                                                                                "

@@ -9,29 +9,16 @@ pub fn char_width(c: char) -> usize {
     c.width().unwrap_or(0)
 }
 
-/// Soft-wrap layout: `width` is the text column width, `indent` is `ui.wrap_indent`.
+/// Soft-wrap layout: `width` is the text column width.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Wrap {
     pub width: u16,
-    pub indent: u16,
 }
 
 impl Wrap {
-    /// Screen x where continuation text starts.
-    pub fn offset(self) -> usize {
-        0
-    }
-
-    /// Screen x where segment `seg`'s text starts.
-    pub fn row_x(self, seg: usize) -> usize {
-        if seg == 0 { 0 } else { self.offset() }
-    }
-
-    /// Text width of segment `seg`; at least 1.
-    pub fn row_width(self, seg: usize) -> usize {
-        usize::from(self.width)
-            .saturating_sub(self.row_x(seg))
-            .max(1)
+    /// Text width of a row; at least 1.
+    pub fn row_width(self) -> usize {
+        usize::from(self.width).max(1)
     }
 }
 
@@ -42,16 +29,16 @@ pub fn wrap_line(line: &str, wrap: Wrap) -> Vec<Range<usize>> {
     for end in piece_ends(line) {
         let piece = &line[piece_start..end];
         let piece_w: usize = piece.chars().map(char_width).sum();
-        if col + piece_w <= wrap.row_width(segments.len()) {
+        if col + piece_w <= wrap.row_width() {
             col += piece_w;
-        } else if col > 0 && piece_w <= wrap.row_width(segments.len() + 1) {
+        } else if col > 0 && piece_w <= wrap.row_width() {
             segments.push(start..piece_start);
             (start, col) = (piece_start, piece_w);
         } else {
             // Wider than a whole row: fill the current row, then break by char.
             for (i, c) in piece.char_indices() {
                 let char_w = char_width(c);
-                if col > 0 && col + char_w > wrap.row_width(segments.len()) {
+                if col > 0 && col + char_w > wrap.row_width() {
                     segments.push(start..piece_start + i);
                     (start, col) = (piece_start + i, 0);
                 }
@@ -93,7 +80,7 @@ pub fn char_at_display(line: &str, dcol: usize) -> usize {
     last
 }
 
-/// Char `col` → (segment index, screen x including the segment's `row_x`).
+/// Char `col` → (segment index, screen x).
 pub fn to_screen(line: &str, wrap: Wrap, col: usize) -> (usize, usize) {
     let byte = line.char_indices().nth(col).map_or(line.len(), |(i, _)| i);
     let segments = wrap_line(line, wrap);
@@ -101,30 +88,25 @@ pub fn to_screen(line: &str, wrap: Wrap, col: usize) -> (usize, usize) {
     let seg = segments.iter().position(|r| byte < r.end).unwrap_or(last);
     let start = segments[seg].start;
     let x: usize = line[start..byte].chars().map(char_width).sum();
-    (seg, wrap.row_x(seg) + x)
+    (seg, x)
 }
 
-/// (segment, screen x) → char index, clamped to the segment; x before the segment's text
-/// gives its first char.
+/// (segment, screen x) → char index, clamped to the segment.
 pub fn from_screen(line: &str, wrap: Wrap, seg: usize, x: usize) -> usize {
     let segments = wrap_line(line, wrap);
     let seg = seg.min(segments.len() - 1);
     let range = segments[seg].clone();
-    let dcol = x.saturating_sub(wrap.row_x(seg));
-    line[..range.start].chars().count() + char_at_display(&line[range], dcol)
+    line[..range.start].chars().count() + char_at_display(&line[range], x)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const W10: Wrap = Wrap {
-        width: 10,
-        indent: 0,
-    };
+    const W10: Wrap = Wrap { width: 10 };
 
     fn rows(line: &str, width: u16) -> Vec<&str> {
-        let wrap = Wrap { width, indent: 0 };
+        let wrap = Wrap { width };
         wrap_line(line, wrap)
             .into_iter()
             .map(|r| &line[r])

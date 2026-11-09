@@ -168,7 +168,21 @@ mod tests {
     fn modified_wrap_on() {
         let mut app = app(vec![file("src/main.rs", FileStatus::Modified, false)], true);
         open(&mut app, MODIFIED, Some(OLD), Some(NEW));
-        insta::assert_snapshot!(render(&app));
+        // From new line 3's `let`, select down onto its continuation row.
+        for c in ['j', 'v', 'j'] {
+            app.handle_key(KeyEvent::from(KeyCode::Char(c)));
+        }
+        let backend = render(&app);
+        // Continuation row on screen line 3: marker in the line number's cell (41), text from
+        // the text column's first cell (45); the selection ends on the cursor.
+        let buf = backend.buffer();
+        assert_eq!(buf[(41, 3)].symbol(), "↪");
+        assert_eq!(buf[(41, 3)].fg, app.theme.line_number);
+        assert_eq!(buf[(45, 3)].bg, app.theme.selection);
+        assert_eq!(buf[(48, 3)].bg, app.theme.selection);
+        assert_eq!(buf[(49, 3)].bg, app.theme.cursor);
+        assert_ne!(buf[(50, 3)].bg, app.theme.selection);
+        insta::assert_snapshot!(backend);
     }
 
     #[test]

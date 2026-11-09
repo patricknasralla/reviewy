@@ -41,15 +41,19 @@ pub fn draw(
     frame.render_widget(block, rect);
     let buf = frame.buffer_mut();
     let selected = Style::new().bg(theme.selection);
-    for (y, (i, seg, row_x)) in (inner.y..inner.bottom()).zip(editor.rows()) {
+    for (y, (i, seg)) in (inner.y..inner.bottom()).zip(editor.rows()) {
         let line = editor.line(i);
-        let row_x = row_x as u16;
-        let (x, max) = (inner.x + row_x, inner.width.saturating_sub(row_x));
-        buf.set_stringn(x, y, &line[seg.clone()], usize::from(max), Style::new());
+        buf.set_stringn(
+            inner.x,
+            y,
+            &line[seg.clone()],
+            usize::from(inner.width),
+            Style::new(),
+        );
         let sel = editor.selection_cols(i);
-        let cells = sel.and_then(|sel| super::selection_cells(line, seg, sel, max));
+        let cells = sel.and_then(|sel| super::selection_cells(line, seg, sel, inner.width));
         if let Some(cells) = cells {
-            let rect = Rect::new(x + cells.start, y, cells.len() as u16, 1);
+            let rect = Rect::new(inner.x + cells.start, y, cells.len() as u16, 1);
             buf.set_style(rect, selected);
         }
     }

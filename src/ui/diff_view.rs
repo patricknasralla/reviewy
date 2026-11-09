@@ -161,6 +161,7 @@ impl Cell<'_> {
         };
         buf.set_style(text_rect, Style::new().bg(bg));
 
+        let digits = usize::from(col.gutter.saturating_sub(GUTTER_EXTRA));
         if self.skip == 0 {
             let (marker, marker_fg) = match kind {
                 LineKind::Unchanged => (' ', theme.foreground),
@@ -173,7 +174,6 @@ impl Cell<'_> {
             } else {
                 theme.line_number
             };
-            let digits = usize::from(col.gutter.saturating_sub(GUTTER_EXTRA));
             let gutter = Line::from(vec![
                 Span::styled(format!(" {:>digits$}", i + 1), Style::new().fg(number_fg)),
                 Span::styled(marker.to_string(), Style::new().fg(marker_fg)),
@@ -198,8 +198,16 @@ impl Cell<'_> {
                 continue;
             }
             let y = rect.y + (k - self.skip) as u16;
-            let row_x = self.wrap.map_or(0, |w| w.row_x(k)) as u16;
-            let (x, max) = (text_rect.x + row_x, col.text.saturating_sub(row_x));
+            // Continuation marker in the line number's last cell; a column too narrow for
+            // numbers has none.
+            if k > 0 && digits > 0 {
+                buf.set_string(
+                    rect.x + digits as u16,
+                    y,
+                    "↪",
+                    Style::new().fg(theme.line_number),
+                );
+            }
             let spans = spans(
                 line,
                 seg.clone(),
@@ -208,11 +216,12 @@ impl Cell<'_> {
                 base,
                 token_tint,
             );
-            buf.set_line(x, y, &Line::from(spans), max);
+            buf.set_line(text_rect.x, y, &Line::from(spans), col.text);
             let sel = marks.selection.clone();
-            let cells = sel.and_then(|sel| super::selection_cells(line, seg.clone(), sel, max));
+            let cells =
+                sel.and_then(|sel| super::selection_cells(line, seg.clone(), sel, col.text));
             if let Some(cells) = cells {
-                let rect = Rect::new(x + cells.start, y, cells.len() as u16, 1);
+                let rect = Rect::new(text_rect.x + cells.start, y, cells.len() as u16, 1);
                 buf.set_style(rect, selected);
             }
         }

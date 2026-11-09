@@ -65,10 +65,7 @@ impl Editor {
             undo: Undo::new(undo_levels),
             insertion: None,
             scroll: 0,
-            wrap: Wrap {
-                width: 1,
-                indent: 0,
-            },
+            wrap: Wrap { width: 1 },
             height: 1,
         };
         if mode == Mode::Insert {
@@ -243,15 +240,13 @@ impl Editor {
         self.commit(before);
     }
 
-    /// Visible screen rows from the scroll position down, as (line, byte range, screen x of the
-    /// row's text). The x is 0 on a line's first row and on the trailing empty row.
-    pub fn rows(&self) -> impl Iterator<Item = (usize, Range<usize>, usize)> + '_ {
+    /// Visible screen rows as (line, byte range in the line), from the scroll position down.
+    pub fn rows(&self) -> impl Iterator<Item = (usize, Range<usize>)> + '_ {
         (0..self.buffer.line_count())
             .flat_map(|i| {
-                let segments = self.segments(self.buffer.line(i));
-                (0..segments.len())
-                    .map(|k| (i, segments[k].clone(), self.segment_x(&segments, k)))
-                    .collect::<Vec<_>>()
+                self.segments(self.buffer.line(i))
+                    .into_iter()
+                    .map(move |r| (i, r))
             })
             .skip(self.scroll)
     }
@@ -386,19 +381,10 @@ impl Editor {
     fn segments(&self, line: &str) -> Vec<Range<usize>> {
         let mut segments = wrap::wrap_line(line, self.wrap);
         let last = segments.len() - 1;
-        if !line.is_empty() && width(&line[segments[last].clone()]) >= self.wrap.row_width(last) {
+        if !line.is_empty() && width(&line[segments[last].clone()]) >= self.wrap.row_width() {
             segments.push(line.len()..line.len());
         }
         segments
-    }
-
-    /// Screen x where row `seg` of `segments` starts; 0 for the trailing empty row.
-    fn segment_x(&self, segments: &[Range<usize>], seg: usize) -> usize {
-        if segments[seg].is_empty() {
-            0
-        } else {
-            self.wrap.row_x(seg)
-        }
     }
 
     /// Screen row where each line starts, then the total row count.
@@ -418,7 +404,7 @@ impl Editor {
         let segments = self.segments(text);
         let seg = (segments.iter().position(|r| at < r.end)).unwrap_or(segments.len() - 1);
         let x = width(&text[segments[seg].start..at]);
-        (seg, self.segment_x(&segments, seg) + x)
+        (seg, x)
     }
 
     /// Char col at screen x `want` in row `seg` of `line`; past the end, the row's last
@@ -426,7 +412,6 @@ impl Editor {
     fn col_at(&self, line: usize, seg: usize, want: usize) -> usize {
         let text = self.buffer.line(line);
         let segments = self.segments(text);
-        let want = want.saturating_sub(self.segment_x(&segments, seg));
         let range = segments[seg].clone();
         let before = text[..range.start].chars().count();
         let mut x = 0;
@@ -577,9 +562,10 @@ mod tests {
     #[test]
     fn typed_space_at_full_row_moves_last_word_down() {
         let mut e = editor("ab cd", 6, Mode::Insert);
-        let ranges = |e: &Editor| e.rows().map(|(_, r, _)| r).collect::<Vec<_>>();
+        let ranges = |e: &Editor| e.rows().map(|(_, r)| r).collect::<Vec<_>>();
         press(&mut e, KeyCode::Char('e'));
         assert_eq!(ranges(&e), [0..6, 6..6]);
+        assert_eq!(e.cursor_cell(), Some((1, 0)));
         press(&mut e, KeyCode::Char(' '));
         assert_eq!(ranges(&e), [0..3, 3..7]);
     }
@@ -587,7 +573,7 @@ mod tests {
     #[test]
     fn opens_scrolled_to_the_top_when_the_body_fits() {
         let e = editor("a\nb\nc\n", 20, Mode::Insert);
-        assert_eq!(e.rows().next(), Some((0, 0..1, 0)));
+        assert_eq!(e.rows().next(), Some((0, 0..1)));
         assert_eq!(e.cursor_cell(), Some((3, 0)));
     }
 
